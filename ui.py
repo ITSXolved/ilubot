@@ -102,6 +102,9 @@ APP_PROTOCOL = APP_VERSION.split()[-1]
 
 _DEFAULT_W, _DEFAULT_H = 980, 700
 _MIN_W,     _MIN_H     = 820, 580
+# Phone-shaped window for the conference (call) view.
+_PHONE_W, _PHONE_H         = 400, 860
+_PHONE_MIN_W, _PHONE_MIN_H = 340, 600
 _LEFT_W  = 148
 _RIGHT_W = 340
 
@@ -418,7 +421,7 @@ class _SysMetrics:
 _metrics = _SysMetrics()
 
 class HudCanvas(QWidget):
-    def __init__(self, face_path: str, assistant_name: str = "ZainAI", parent=None):
+    def __init__(self, face_path: str, assistant_name: str = "Ilubot", parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self.setMinimumSize(300, 300)
@@ -445,7 +448,7 @@ class HudCanvas(QWidget):
             from memory.config_manager import get_hud_style
             self.hud_style = get_hud_style()
         except Exception:
-            self.hud_style = "face"
+            self.hud_style = "core"
         self._core_phase = 0.0
 
         self._tick       = 0
@@ -1063,7 +1066,7 @@ class LogWidget(QTextEdit):
         self._text    = ""
         self._pos     = 0
         self._tag     = "sys"
-        self._ai_name_lc = "zainai"   # updated when assistant name changes
+        self._ai_name_lc = "ilubot"   # updated when assistant name changes
         self._tmr = QTimer(self)
         self._tmr.timeout.connect(self._step)
         self._sig.connect(self._enqueue)
@@ -1086,7 +1089,7 @@ class LogWidget(QTextEdit):
         tl = self._text.lower()
         _ai_pfx = f"{self._ai_name_lc}:"
         if   tl.startswith("you:"):                              self._tag = "you"
-        elif tl.startswith(_ai_pfx) or tl.startswith("jarvis:") or tl.startswith("zainai:"): self._tag = "ai"
+        elif tl.startswith(_ai_pfx) or tl.startswith("jarvis:") or tl.startswith("zainai:") or tl.startswith("ilubot:"): self._tag = "ai"
         elif tl.startswith("file:"):                             self._tag = "file"
         elif "err" in tl:                                        self._tag = "err"
         else:                                                    self._tag = "sys"
@@ -1223,7 +1226,7 @@ class FileDropZone(QWidget):
 
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select a file for ZainAI", str(Path.home()),
+            self, "Select a file for Ilubot", str(Path.home()),
             "All Files (*.*);;"
             "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg);;"
             "Documents (*.pdf *.docx *.txt *.md *.pptx);;"
@@ -1642,10 +1645,10 @@ class HueWheel(QWidget):
 class CustomizeOverlay(QWidget):
     """Floating overlay — change assistant name, user name, UI colour and voice."""
 
-    saved = pyqtSignal(str, str, str, str)   # assistant_name, user_name, ui_color, voice
-    _OW, _OH = 400, 588
+    saved = pyqtSignal(str, str, str, str, str)   # assistant_name, user_name, ui_color, voice, language
+    _OW, _OH = 400, 650
 
-    def __init__(self, assistant_name="ZainAI", user_name="",
+    def __init__(self, assistant_name="Ilubot", user_name="",
                  ui_color=DEFAULT_UI_COLOR, voice="", parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -1693,6 +1696,28 @@ class CustomizeOverlay(QWidget):
         self._user_input.setFixedHeight(32)
         self._user_input.setStyleSheet(_fs)
         lay.addWidget(self._user_input)
+
+        # ── Teaching language — Ilubot explains everything in this language ──
+        from memory.config_manager import TEACHING_LANGUAGES, get_teaching_language
+        lay.addSpacing(4)
+        lay.addWidget(_lbl("TEACHING LANGUAGE", 8, color=C.TEXT_DIM,
+                            align=Qt.AlignmentFlag.AlignLeft))
+        self._lang_box = QComboBox()
+        self._lang_box.setFont(QFont("Courier New", 10))
+        self._lang_box.setFixedHeight(32)
+        self._lang_box.setStyleSheet(
+            f"QComboBox {{ background: #000d12; color: {C.TEXT}; "
+            f"border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 8px; }}"
+            f"QComboBox:hover {{ border-color: {C.PRI}; }}"
+            f"QComboBox QAbstractItemView {{ background: #000d12; color: {C.TEXT}; "
+            f"selection-background-color: {C.PRI}; }}")
+        _cur_lang = get_teaching_language()
+        _langs = list(TEACHING_LANGUAGES)
+        if _cur_lang not in _langs:
+            _langs.insert(0, _cur_lang)
+        self._lang_box.addItems(_langs)
+        self._lang_box.setCurrentText(_cur_lang)
+        lay.addWidget(self._lang_box)
 
         # ── Assistant voice — Gemini prebuilt voices ─────────────────────────
         # Names are language-neutral proper nouns, so the row reads the same in
@@ -1851,9 +1876,10 @@ class CustomizeOverlay(QWidget):
         self.hide()
 
     def _save(self):
-        name = self._name_input.text().strip() or "ZainAI"
+        name = self._name_input.text().strip() or "Ilubot"
         user = self._user_input.text().strip()
-        self.saved.emit(name, user, self._sel_color or DEFAULT_UI_COLOR, self._sel_voice)
+        self.saved.emit(name, user, self._sel_color or DEFAULT_UI_COLOR, self._sel_voice,
+                        self._lang_box.currentText())
         self.hide()
 
 
@@ -2221,10 +2247,10 @@ class AudioDeviceOverlay(_HudOverlay):
         self._level_seen.connect(self._on_level)
         self._test_result.connect(self._on_result)
 
-        self._in_box  = _row("MICROPHONE — what ZainAI hears you with",
+        self._in_box  = _row("MICROPHONE — what Ilubot hears you with",
                              "input", get_input_device())
         lay.addSpacing(4)
-        self._out_box = _row("SPEAKERS — what ZainAI talks through",
+        self._out_box = _row("SPEAKERS — what Ilubot talks through",
                              "output", get_output_device())
 
         # ── Output volume, beside the output device ──────────────────────────
@@ -2525,7 +2551,7 @@ class MemoryOverlay(_HudOverlay):
 
         from memory.memory_manager import all_entries_for_ui
 
-        hdr = QLabel("🧠  WHAT ZAINAI REMEMBERS")
+        hdr = QLabel("🧠  WHAT ILUBOT REMEMBERS")
         hdr.setFont(QFont("Courier New", 12, QFont.Weight.Bold))
         hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         self._lay.addWidget(hdr)
@@ -4084,7 +4110,7 @@ class RemoteKeyOverlay(QWidget):
         if _blocked:
             warn = _lbl(
                 "⚠  Windows is blocking incoming connections to this copy of "
-                "Python, so your phone cannot reach this page. Restart ZainAI "
+                "Python, so your phone cannot reach this page. Restart Ilubot "
                 "and accept the Windows prompt, or remove the rules named "
                 + ", ".join(sorted({n for n, _ in _blocked}))
                 + " under Windows Defender Firewall → Inbound Rules.",
@@ -4223,7 +4249,7 @@ class RemoteKeyOverlay(QWidget):
         self._qr_label.setStyleSheet(
             "color: #00ff88; background: #001a0d; border-radius: 10px;"
         )
-        self._timer_lbl.setText("Phone connected — ZainAI ready")
+        self._timer_lbl.setText("Phone connected — Ilubot ready")
         self._timer_lbl.setStyleSheet(f"color: {C.GREEN}; background: transparent;")
 
     def _refresh_key(self):
@@ -4286,7 +4312,7 @@ class MainWindow(QMainWindow):
 
         # Load customization from config
         _cfg = _read_full_config()
-        self._assistant_name: str = (_cfg.get("assistant_name") or "ZainAI").strip()
+        self._assistant_name: str = (_cfg.get("assistant_name") or "Ilubot").strip()
         _display = self._assistant_name.upper()
 
         # Apply the saved UI colour BEFORE panels/stylesheets are built
@@ -4567,6 +4593,8 @@ class MainWindow(QMainWindow):
             self._main_stack.addWidget(central)
             self._main_stack.setCurrentIndex(0)
         self.setCentralWidget(self._main_stack)
+        if HAVE_WEBENGINE:
+            self._apply_window_shape(phone=True)
 
         # Quick-access drawer (floating overlay, built after central widget layout is done)
         self._quick_drawer = self._build_quick_drawer()
@@ -6692,7 +6720,7 @@ class MainWindow(QMainWindow):
             self._customize_overlay.hide()
         cw = self.centralWidget()
         ov = CustomizeOverlay(
-            cfg.get("assistant_name", "ZainAI") or "ZainAI",
+            cfg.get("assistant_name", "Ilubot") or "Ilubot",
             cfg.get("user_name", ""),
             cfg.get("ui_color", "") or DEFAULT_UI_COLOR,
             cfg.get("voice_name", ""),
@@ -6717,9 +6745,9 @@ class MainWindow(QMainWindow):
             retheme_all_widgets(old, current_palette())
 
     def _apply_name_update(self, name: str, user_name: str, ui_color: str = "",
-                           voice: str = ""):
+                           voice: str = "", language: str = ""):
         """Update all name/theme-dependent UI elements and persist to config."""
-        self._assistant_name = name.strip() or "ZainAI"
+        self._assistant_name = name.strip() or "Ilubot"
         display = self._assistant_name.upper()
         self.setWindowTitle(f"{display} — {APP_VERSION}")
         self._title_lbl.setText(display)
@@ -6747,6 +6775,15 @@ class MainWindow(QMainWindow):
                 save_voice(voice)
                 voice_changed = True
 
+        # Teaching language is baked into the system prompt at connect time,
+        # so a change rebuilds the session the same way a voice change does.
+        lang_changed = False
+        if language:
+            from memory.config_manager import get_teaching_language, save_teaching_language
+            if language != get_teaching_language():
+                save_teaching_language(language)
+                lang_changed = True
+
         try:
             data = _read_full_config()
             data["assistant_name"] = self._assistant_name
@@ -6759,10 +6796,12 @@ class MainWindow(QMainWindow):
                 self._log.append_log(f"SYS: UI colour applied — {ui_color}")
             if voice_changed:
                 self._log.append_log(f"SYS: Voice set — {voice}")
+            if lang_changed:
+                self._log.append_log(f"SYS: Teaching language set — {language}")
         except Exception as e:
             self._log.append_log(f"ERR: Config save failed — {e}")
 
-        if voice_changed and self.on_voice_change:
+        if (voice_changed or lang_changed) and self.on_voice_change:
             self.on_voice_change()
 
     def _centre_overlay(self, ov) -> None:
@@ -6920,6 +6959,26 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_main_stack") and self._main_stack.count() > 1:
             idx = 1 if self._main_stack.currentIndex() == 0 else 0
             self._main_stack.setCurrentIndex(idx)
+            self._apply_window_shape(phone=(idx == 0))
+
+    def _apply_window_shape(self, phone: bool) -> None:
+        """Phone-shaped portrait window for the call view; the classic HUD
+        needs the wide desktop layout."""
+        screen = QApplication.primaryScreen().availableGeometry()
+        if phone:
+            h = min(_PHONE_H, screen.height() - 40)
+            w = _PHONE_W
+            # An explicit minimum on the stack overrides the (wide) classic
+            # HUD's layout minimum, which would otherwise stop the shrink.
+            self._main_stack.setMinimumSize(_PHONE_MIN_W, _PHONE_MIN_H)
+            self.setMinimumSize(_PHONE_MIN_W, _PHONE_MIN_H)
+        else:
+            w, h = _DEFAULT_W, _DEFAULT_H
+            self._main_stack.setMinimumSize(0, 0)
+            self.setMinimumSize(_MIN_W, _MIN_H)
+        self.resize(w, h)
+        self.move(screen.x() + (screen.width() - w) // 2,
+                  screen.y() + (screen.height() - h) // 2)
 
     def _on_conf_leave_call(self):
         """Conference UI → user pressed Leave/Cancel."""
@@ -7057,7 +7116,7 @@ class MainWindow(QMainWindow):
             self._overlay.hide()
             self._overlay = None
         self._apply_state("LISTENING")
-        self._assistant_name = _read_full_config().get("assistant_name", "ZainAI") or "ZainAI"
+        self._assistant_name = _read_full_config().get("assistant_name", "Ilubot") or "Ilubot"
         self._log._ai_name_lc = self._assistant_name.lower()
         self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. {self._assistant_name} online.")
 

@@ -1,4 +1,4 @@
-# ── ZainAI 3D Conference Server Dockerfile ─────────────────────────────────────
+# ── Ilubot 3D Conference Server Dockerfile ─────────────────────────────────────
 # Optimized for Google Cloud Run, Docker Compose, and Containerized Deployments
 FROM python:3.11-slim
 

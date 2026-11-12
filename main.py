@@ -75,6 +75,7 @@ from memory.config_manager     import (
     get_brief_enabled, get_media_resolution, get_proactive_audio_enabled,
     get_push_to_talk_enabled, get_thinking_enabled, get_turn_tuning, get_voice,
     get_wake_word_enabled, save_wake_word_enabled,    get_input_device, get_output_device,
+    get_teaching_language,
 )
 from core                     import gemini as _gemini
 from core.plugin_loader        import discover_plugins
@@ -335,9 +336,10 @@ def _load_system_prompt() -> str:
         return PROMPT_PATH.read_text(encoding="utf-8")
     except Exception:
         return (
-            "You are ZainAI, a warm, wise, and helpful teacher dedicated to developing students' critical thinking. "
-            "Never act as a homework machine or provide direct answers to students' questions or exercises. "
-            "Instead, guide them with Socratic questions, break problems down, and challenge them to think through to the answer."
+            "You are Ilubot, a warm, intellectually rigorous teacher and critical thinking mentor. "
+            "When a student asks a question, NEVER give the direct answer right away. Ask one focused, progressive "
+            "guiding question per turn—building on their answers—so they uncover and reach the real answer through "
+            "their own reasoning within 3–4 conversational turns."
         )
 
 _CTRL_RE = re.compile(r"<ctrl\d+>", re.IGNORECASE)
@@ -362,6 +364,20 @@ def _clean_transcript(text: str) -> str:
     text = _CTRL_RE.sub("", text)
     text = re.sub(r"[\x00-\x08\x0b-\x1f]", "", text)
     return text.strip()
+
+# ── Restricted teaching mode ─────────────────────────────────────────────────
+# Ilubot only explains what is on the student's screen and what the camera
+# shows. Every other tool (web search, browser, apps, files, messages, system
+# control, reminders, monitors, plugins, …) is withheld from the model AND
+# refused at execution time. Background jobs that go online or start
+# unrelated conversation are switched off. Set RESTRICTED_MODE = False to
+# restore the full assistant.
+RESTRICTED_MODE = True
+ALLOWED_TOOLS = frozenset({
+    "screen_process",   # look at the screen or the camera
+    "close_camera",     # close the live camera view
+    "shutdown_jarvis",  # end the session when the student says goodbye
+})
 
 TOOL_DECLARATIONS = [
     # ── Inline tools ─────────────────────────────────────────────────────────
@@ -414,7 +430,7 @@ TOOL_DECLARATIONS = [
         "name": "manage_monitor",
         "description": (
             "Add, remove, or list background monitoring topics. "
-            "ZainAI checks these topics once a day and alerts the user when there is a new development. "
+            "Ilubot checks these topics once a day and alerts the user when there is a new development. "
             "Use 'add' when the user says 'monitor X', 'track X', 'follow X'. "
             "Use 'remove' when the user says 'stop monitoring X'. "
             "Use 'list' when the user asks what is being monitored. "
@@ -440,7 +456,7 @@ TOOL_DECLARATIONS = [
         "description": (
             "Shuts down the assistant completely. "
             "Call this when the user expresses intent to end the conversation, "
-            "close the assistant, say goodbye, or stop ZainAI. "
+            "close the assistant, say goodbye, or stop Ilubot. "
             "The user can say this in ANY language."
         ),
         "parameters": {
@@ -1133,10 +1149,10 @@ class JarvisLive:
         # Load customization from config
         try:
             _cfg = json.loads(open(API_CONFIG_PATH, encoding="utf-8").read())
-            self._asst_name = (_cfg.get("assistant_name") or "ZainAI").strip()
+            self._asst_name = (_cfg.get("assistant_name") or "Ilubot").strip()
             _user_name = (_cfg.get("user_name") or "").strip()
         except Exception:
-            self._asst_name = "ZainAI"
+            self._asst_name = "Ilubot"
             _user_name = ""
 
         memory     = load_memory()
@@ -1157,9 +1173,41 @@ class JarvisLive:
                  else "STUDENT: You do not know the student's name yet. Warmly ask for their name when welcoming them, and use their name once they share it.")
         identity_ctx = (
             f"[IDENTITY & ROLE]\n"
-            f"Your name is {self._asst_name}. You are a warm, helpful teacher and critical thinking expert.\n"
+            f"Your name is {self._asst_name}. You are an intellectually rigorous, warm teacher and critical thinking mentor. "
+            f"Never give direct answers to questions right away—ask progressive guiding questions that build on the "
+            f"student's thinking so they reach and confirm the real answer in 3–4 turns.\n"
             f"{_addr}\n\n"
         )
+
+        _teach_lang = get_teaching_language()
+        identity_ctx += (
+            f"[TEACHING LANGUAGE]\n"
+            f"Always speak and teach in {_teach_lang}. This was chosen in the settings "
+            f"and overrides every other language rule in these instructions: even if "
+            f"the student speaks another language, or the material on the screen is in "
+            f"another language, explain it in {_teach_lang}. You may quote short words "
+            f"or terms from the screen as they are written, then explain them in "
+            f"{_teach_lang}.\n\n"
+        )
+        if RESTRICTED_MODE:
+            identity_ctx += (
+                "[SCOPE — STRICT]\n"
+                "You are a tutor for the material on the student's screen and what "
+                "they show you on the camera. That is your ONLY job.\n"
+                "- To see anything, call screen_process (angle 'screen' for the "
+                "computer, 'camera' for the webcam). Teach only from what you "
+                "actually see there.\n"
+                "- You have NO internet access. Never search, browse, open apps or "
+                "websites, play videos, send messages, check news, weather, prices "
+                "or anything else outside this screen and camera.\n"
+                "- Do not chat about unrelated outside topics (news, celebrities, "
+                "sports, politics, shopping, gossip, other people). If the student "
+                "asks, kindly say you can only help with what is on their screen or "
+                "in front of the camera, and invite them to show you their study "
+                "material.\n"
+                "- Use the rest of these instructions only where they fit this "
+                "scope; any mention of other tools does not apply.\n\n"
+            )
 
         # Everything the model is told about *itself* is derived here, not
         # written into prompt.txt: the name comes from config, the platform from
@@ -1194,6 +1242,14 @@ class JarvisLive:
                                   else getattr(d, "name", "")) not in _blocked]
                 print(f"[JARVIS] {len(_blocked)} tool(s) withheld — "
                       f"this engine cannot serve them")
+
+        if RESTRICTED_MODE:
+            _before = len(_all_decls)
+            _all_decls = [d for d in _all_decls
+                          if (d.get("name") if isinstance(d, dict)
+                              else getattr(d, "name", "")) in ALLOWED_TOOLS]
+            print(f"[JARVIS] Restricted mode — {_before - len(_all_decls)} tool(s) "
+                  f"disabled, {len(_all_decls)} kept (screen & camera only)")
 
         _names = {(d.get("name") if isinstance(d, dict) else getattr(d, "name", ""))
                   for d in _all_decls}
@@ -1321,6 +1377,18 @@ class JarvisLive:
         args = dict(fc.args or {})
 
         print(f"[JARVIS] 🔧 {name}  {args}")
+
+        if RESTRICTED_MODE and name not in ALLOWED_TOOLS:
+            print(f"[JARVIS] ⛔ {name} refused — restricted mode")
+            return types.FunctionResponse(
+                id=fc.id, name=name,
+                response={"result": (
+                    "This ability is disabled. You can only explain what is on "
+                    "the student's screen or in front of the camera. Tell the "
+                    "student briefly, in the teaching language, and offer to "
+                    "look at their screen or camera instead.")},
+            )
+
         self.ui.set_state("THINKING")
 
 
@@ -1949,31 +2017,30 @@ class JarvisLive:
             e = identity.get(k, {})
             return (e.get("value", "") if isinstance(e, dict) else str(e)).strip()
 
-        lang = _val("language")
+        lang = get_teaching_language()
         name = _val("name")
 
         await asyncio.sleep(0.3)
         if not self.session:
             return
 
-        lang_clause = (f" Speak this greeting in {lang}, then follow the "
-                       f"student's own language from their first reply onward."
+        lang_clause = (f" Speak this greeting in {lang}, and keep teaching in {lang}."
                        if lang else "")
 
         # Ask for their name with a warm, encouraging welcome
         if name:
             p1 = (
-                f"[STARTUP_WELCOME] Greet the student with a warm, encouraging welcome as their teacher. "
+                f"[STARTUP_WELCOME] Greet the student with a warm, encouraging welcome as their critical thinking mentor. "
                 f"Acknowledge them warmly (you recall their name may be {name}, but confirm or ask how they would like to be called today), "
-                f"and invite them to share what question, concept, or problem they want to explore and think through together. "
-                f"Keep it friendly, enthusiastic, and under 2 short sentences. "
+                f"and invite them to open their study material on the screen or hold it up to the camera so you can explain it together. "
+                f"Keep it friendly, intellectually curious, and under 2 short sentences. "
                 f"Do NOT mention news or headlines. Do NOT call any tools.{lang_clause}"
             )
         else:
             p1 = (
-                f"[STARTUP_WELCOME] Greet the student with a warm, encouraging welcome as their teacher and critical thinking mentor. "
-                f"Warmly ask for their name so you can get to know them, and invite them to share what topic or question they'd like to explore today. "
-                f"Keep it friendly, enthusiastic, and under 2 short sentences. "
+                f"[STARTUP_WELCOME] Greet the student with a warm, encouraging welcome as their critical thinking mentor. "
+                f"Warmly ask for their name so you can get to know them, and invite them to open their study material on the screen or hold it up to the camera so you can explain it together. "
+                f"Keep it friendly, intellectually curious, and under 2 short sentences. "
                 f"Do NOT mention news or headlines. Do NOT call any tools.{lang_clause}"
             )
 
@@ -2446,9 +2513,13 @@ class JarvisLive:
                     tg.create_task(self._listen_audio())
                     tg.create_task(self._receive_audio())
                     tg.create_task(self._play_audio())
-                    tg.create_task(self._run_system_monitor())
-                    tg.create_task(self._run_background_monitor())
-                    tg.create_task(self._run_proactive_mode())
+                    if not RESTRICTED_MODE:
+                        # Hardware alerts, online news monitoring and
+                        # unprompted check-ins are all off-topic for a
+                        # screen/camera tutor (and the monitor goes online).
+                        tg.create_task(self._run_system_monitor())
+                        tg.create_task(self._run_background_monitor())
+                        tg.create_task(self._run_proactive_mode())
                     tg.create_task(self._run_sleep_watch())
                     tg.create_task(self._watch_call_ended())
                     if self._dashboard:

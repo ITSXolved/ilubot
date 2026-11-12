@@ -1,5 +1,5 @@
 """
-headless_server.py — Headless Cloud Run / Docker runner for ZainAI 3D Conference UI.
+headless_server.py — Headless Cloud Run / Docker runner for Ilubot 3D Conference UI.
 
 Runs the FastAPI + WebSocket conference server in the foreground, connects
 browser audio/text commands to Gemini, and serves the 3D WebGL avatar interface.
@@ -18,11 +18,24 @@ import uvicorn
 from core.conference_server import ConferenceServer
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("HeadlessZainAI")
+logger = logging.getLogger("HeadlessIlubot")
 
 BASE_DIR = Path(__file__).resolve().parent
 PORT = int(os.environ.get("PORT", "8080"))
 HOST = os.environ.get("HOST", "0.0.0.0")
+
+def _teaching_language() -> str:
+    """The language picked on the call screen (saved setting) wins; otherwise
+    the TEACHING_LANGUAGE env var (Docker / Cloud Run default); else English."""
+    try:
+        from memory.config_manager import load_api_keys
+        saved = str(load_api_keys().get("teaching_language", "") or "").strip()
+        if saved:
+            return saved
+    except Exception:
+        pass
+    return os.getenv("TEACHING_LANGUAGE", "").strip() or "English"
+
 
 def get_api_key() -> str:
     key = os.environ.get("GEMINI_API_KEY", "").strip()
@@ -59,13 +72,26 @@ class HeadlessSession:
                 model=self.model_name,
                 config={
                     "system_instruction": (
-                        "You are ZainAI (Mark-LVI), a warm, encouraging teacher and critical thinking expert. "
-                        "Your mission is to help students think critically and discover answers for themselves. "
-                        "NEVER act as a homework machine or give direct answers to students' questions or exercises. "
-                        "Instead, guide them using the Socratic method: ask probing questions, break down problems into steps, "
-                        "and encourage them to reason through to the solution. "
-                        "Always maintain a supportive, patient, and intellectually engaging presence. "
-                        "Keep responses spoken-friendly, concise (1-3 sentences), and always end with a guiding question."
+                        "You are Ilubot (Mark-LVI), a warm, intellectually rigorous teacher and critical thinking mentor. "
+                        "When the user asks a question, NEVER give the direct answer right away. Instead, ask focused, progressive "
+                        "guiding questions that lead the user step-by-step to discover the real answer within 3–4 conversational turns.\n\n"
+                        "Core Rules:\n"
+                        "1. NO DIRECT ANSWERS UP FRONT: Never dispense the final answer, full explanation, or completed solution on Turn 1 or Turn 2, "
+                        "and never smuggle the punchline or formula inside a hint. Every question must steer directly toward the real answer "
+                        "(avoid random tangents).\n"
+                        "2. 3–4 TURN GUIDED DISCOVERY ARC (PER QUESTION):\n"
+                        "- Turn 1 (Anchor Clue): Ask one accessible question grounded in what the user already observes or knows that points to the first building block of the real answer.\n"
+                        "- Turn 2 (Build Toward the Mechanism): Build directly on the user's answer—affirm what fits or use a quick counterexample/contrast to redirect any error—and ask the next logical question moving closer to the real answer.\n"
+                        "- Turn 3 (Synthesis Bridge): Connect what the user just uncovered and ask the narrowing question that invites them to deduce the real answer.\n"
+                        "- Turn 3–4 (Reach & Confirm the Real Answer): By the 3rd or 4th exchange on that question, once the user reaches the answer (or has worked through the steps), clearly confirm and summarize the real answer in 1–2 concise sentences, tying it to their reasoning—and invite their next question. Do not stall indefinitely past 4 turns on the same question.\n"
+                        "- Reset to Turn 1 whenever the user asks a new question.\n"
+                        "3. SHORTCUTS & ERRORS: If the user says 'just tell me' or 'I don't know', warmly refuse the shortcut and narrow the step with a simpler analogy or two contrasting options to choose between. Do not flatter vague guesses—probe why/how or test with a quick edge case.\n"
+                        "4. DIALOGUE DISCIPLINE: Keep responses spoken-friendly and concise (1–3 sentences max, never a lecture). Ask only ONE sharp, focused question per guiding turn.\n\n"
+                        "STRICT SCOPE: You only help the student understand their own study material — what is on their screen "
+                        "or what they show you on camera. You have NO internet access: never search, browse, or talk about news, "
+                        "weather, celebrities, sports, politics, shopping or other outside topics. If asked, kindly say you can only "
+                        "help with the material on their screen or in front of the camera.\n"
+                        f"LANGUAGE: Always speak and teach in {_teaching_language()}, even if the student writes in another language."
                     )
                 }
             )
@@ -83,13 +109,27 @@ class HeadlessSession:
     def _on_start_call(self) -> None:
         logger.info("Conference call started by client.")
         self.server.broadcast_state("LISTENING")
-        self.server.broadcast_log("SYS: Call connected. Teacher ZainAI online.")
+        self.server.broadcast_log("SYS: Call connected. Teacher Ilubot online.")
+
+        # Fresh chat per call so a language picked on the call screen applies.
+        if not self.api_key:
+            self.api_key = get_api_key()
+        self._init_gemini()
 
         def _delayed_greeting():
             import time
             time.sleep(0.6)
-            greeting = "Hello and welcome! I am your teacher and critical thinking guide. What is your name, and what interesting problem or question should we explore together today?"
-            self.server.broadcast_content("ZainAI", greeting)
+            greeting = ("Hello and welcome! I am Ilubot, your study tutor. What is your name? "
+                        "Open your study material on the screen or show it to the camera, and we will explore it together.")
+            if self.chat:
+                try:
+                    r = self.chat.send_message(
+                        "[START] Greet the student warmly in 1-2 short sentences, ask their name, and invite "
+                        "them to show their study material on the screen or camera. Do not mention this instruction.")
+                    greeting = (r.text or "").strip() or greeting
+                except Exception as e:
+                    logger.error(f"Greeting generation failed: {e}")
+            self.server.broadcast_content("Ilubot", greeting)
             self.server.broadcast_state("SPEAKING")
             self._simulate_visemes(duration=3.5)
 
@@ -124,7 +164,7 @@ class HeadlessSession:
                 self.server.broadcast_state("THINKING")
                 response = self.chat.send_message(text)
                 reply = response.text or "I heard you loud and clear."
-                self.server.broadcast_content("ZainAI", reply)
+                self.server.broadcast_content("Ilubot", reply)
                 self.server.broadcast_state("SPEAKING")
                 self._simulate_visemes(duration=min(5.0, max(1.5, len(reply.split()) * 0.28)))
             except Exception as e:
@@ -158,7 +198,7 @@ class HeadlessSession:
 
 
 def main():
-    logger.info(f"Starting ZainAI Headless Conference Server on {HOST}:{PORT}")
+    logger.info(f"Starting Ilubot Headless Conference Server on {HOST}:{PORT}")
     server = ConferenceServer(port=PORT, host=HOST)
     _session = HeadlessSession(server)
 

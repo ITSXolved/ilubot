@@ -15,9 +15,9 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
@@ -32,7 +32,7 @@ class ConferenceServer:
     def __init__(self, port: int = PORT, host: str = HOST):
         self.port = int(os.environ.get("PORT", port))
         self.host = host
-        self.app = FastAPI(title="ZainAI Conference Server")
+        self.app = FastAPI(title="Ilubot Conference Server")
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=["*"],
@@ -67,11 +67,58 @@ class ConferenceServer:
                 )
             return HTMLResponse("<h1>Conference interface not found</h1>", status_code=404)
 
-        @self.app.get("/avatar/lipsync_eyes.glb")
-        @self.app.get("/avatar/ZainAI.glb")
-        async def get_avatar():
-            glb_file = AVATAR_DIR / "lipsync_eyes.glb"
-            if not glb_file.exists():
+        @self.app.get("/api/stage_style")
+        async def get_stage_style_route():
+            try:
+                from memory.config_manager import get_stage_style
+                return {"style": get_stage_style()}
+            except Exception:
+                return {"style": "brain"}
+
+        @self.app.post("/api/stage_style")
+        async def set_stage_style_route(request: Request):
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            try:
+                from memory.config_manager import save_stage_style
+                return {"style": save_stage_style(str(body.get("style", "")))}
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+        @self.app.get("/api/teaching_language")
+        async def get_teaching_language_route():
+            try:
+                from memory.config_manager import TEACHING_LANGUAGES, get_teaching_language
+                return {"language": get_teaching_language(), "options": TEACHING_LANGUAGES}
+            except Exception:
+                return {"language": "English", "options": ["English"]}
+
+        @self.app.post("/api/teaching_language")
+        async def set_teaching_language_route(request: Request):
+            # Saved before the call starts; the session reads it when it
+            # connects, so the whole conversation runs in this language.
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            try:
+                from memory.config_manager import get_teaching_language, save_teaching_language
+                lang = str(body.get("language", "")).strip()[:40]
+                if lang:
+                    save_teaching_language(lang)
+                return {"language": get_teaching_language()}
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+        @self.app.get("/avatar/{name}")
+        async def get_avatar(name: str):
+            # Serve the model the page asked for; only plain .glb names inside
+            # AVATAR_DIR are allowed (no paths, no traversal).
+            glb_file = AVATAR_DIR / name
+            if (name != Path(name).name or not name.lower().endswith(".glb")
+                    or not glb_file.is_file()):
                 glb_file = AVATAR_DIR / "ZainAI.glb"
             if glb_file.exists():
                 return FileResponse(

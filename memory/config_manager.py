@@ -52,8 +52,8 @@ def is_configured() -> bool:
 
 
 def get_assistant_name() -> str:
-    """Return the configured assistant name, or 'ZainAI' if not set."""
-    return load_api_keys().get("assistant_name", "ZainAI") or "ZainAI"
+    """Return the configured assistant name, or 'Ilubot' if not set."""
+    return load_api_keys().get("assistant_name", "Ilubot") or "Ilubot"
 
 
 def get_user_name() -> str:
@@ -70,8 +70,39 @@ def save_assistant_config(assistant_name: str, user_name: str) -> None:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         except Exception:
             data = {}
-    data["assistant_name"] = assistant_name.strip() or "ZainAI"
+    data["assistant_name"] = assistant_name.strip() or "Ilubot"
     data["user_name"] = user_name.strip()
+    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
+
+# ── Teaching language ────────────────────────────────────────────────────────
+# Ilubot explains on-screen material and camera content in ONE chosen
+# language, whatever language the student speaks in. Names are English
+# because they are injected into the (English) system prompt.
+TEACHING_LANGUAGES = [
+    "English", "Arabic", "Hindi", "Malayalam", "Tamil", "Urdu", "Bengali",
+    "French", "Spanish", "German", "Turkish", "Indonesian", "Malay",
+    "Chinese", "Japanese", "Korean",
+]
+DEFAULT_TEACHING_LANGUAGE = "English"
+
+
+def get_teaching_language() -> str:
+    """The language Ilubot teaches in. Any non-empty string is accepted so a
+    language typed into the config by hand still works."""
+    lang = str(load_api_keys().get("teaching_language", "") or "").strip()
+    return lang or DEFAULT_TEACHING_LANGUAGE
+
+
+def save_teaching_language(language: str) -> None:
+    ensure_config_dir()
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data["teaching_language"] = (language or "").strip() or DEFAULT_TEACHING_LANGUAGE
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
 
@@ -132,6 +163,22 @@ def save_push_to_talk_enabled(enabled: bool) -> None:
 
 HUD_STYLES = ("face", "core")
 
+# Centrepiece of the main (web) stage: the animated neural brain, the Ilubot HUD rings, or the 3D .glb
+# avatar. Changed from the stage's Settings panel; survives a restart.
+STAGE_STYLES = ("brain", "ilubot", "avatar")
+
+
+def get_stage_style() -> str:
+    v = str(load_api_keys().get("stage_style", "brain")).strip().lower()
+    return v if v in STAGE_STYLES else "brain"
+
+
+def save_stage_style(style: str) -> str:
+    s = str(style or "").strip().lower()
+    s = s if s in STAGE_STYLES else "brain"
+    _save_flag("stage_style", s)
+    return s
+
 
 def get_hud_style() -> str:
     """Which centrepiece the HUD draws: the animated head, or the reactor core.
@@ -141,13 +188,13 @@ def get_hud_style() -> str:
     with; anyone who preferred the older look can switch back in ⚙ and the
     choice survives a restart.
     """
-    v = str(load_api_keys().get("hud_style", "face")).strip().lower()
-    return v if v in HUD_STYLES else "face"
+    v = str(load_api_keys().get("hud_style", "core")).strip().lower()
+    return v if v in HUD_STYLES else "core"
 
 
 def save_hud_style(style: str) -> None:
     s = str(style or "").strip().lower()
-    _save_flag("hud_style", s if s in HUD_STYLES else "face")
+    _save_flag("hud_style", s if s in HUD_STYLES else "core")
 
 
 # ── Live-session tuning ──────────────────────────────────────────────────────

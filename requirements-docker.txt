@@ -1,4 +1,4 @@
-# ── Headless / Docker Requirements for ZainAI Video Conference ─────────────────
+# ── Headless / Docker Requirements for Ilubot Video Conference ─────────────────
 fastapi>=0.110.0,<1.0.0
 uvicorn[standard]>=0.27.0,<1.0.0
 google-genai>=2.8.0,<3.0.0

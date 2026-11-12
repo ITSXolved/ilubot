@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ZainAI — Video Conference</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Ilubot — Video Conference</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -192,6 +192,20 @@
       z-index: 10;
     }
 
+    /* Neural brain stage (2D canvas, no 3D model) */
+    #brain-canvas, #ilubot-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10;
+      background: #050816;
+    }
+    #ilubot-canvas { background: #03090d; }
+    body:not(.stage-avatar) #three-canvas { display: none; }
+    body:not(.stage-brain) #brain-canvas { display: none; }
+    body:not(.stage-ilubot) #ilubot-canvas { display: none; }
+
     /* Vignette & studio ambient lighting overlay */
     .stage-vignette {
       position: absolute;
@@ -353,7 +367,7 @@
       display: none;
     }
 
-    /* Canvas inside ZainAI Tile */
+    /* Canvas inside Ilubot Tile */
     #tile-ai canvas {
       width: 100% !important;
       height: 100% !important;
@@ -1157,6 +1171,202 @@
       color: #f1f5f9;
       letter-spacing: 0.2px;
     }
+
+    /* Teaching-language picker on the call card */
+    .call-lang {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+      width: 100%;
+      max-width: 280px;
+      margin: -8px auto 24px;
+    }
+    .call-lang-label {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .call-lang-label svg {
+      width: 14px; height: 14px;
+      fill: none; stroke: currentColor; stroke-width: 2;
+    }
+    .call-lang-select {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 100%;
+      height: 46px;
+      padding: 0 40px 0 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(0, 210, 255, 0.35);
+      background:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%2394a3b8' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 16px center,
+        rgba(15, 23, 42, 0.85);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 16px;
+      font-weight: 600;
+      text-align: center;
+      text-align-last: center;
+      cursor: pointer;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .call-lang-select:hover, .call-lang-select:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.15);
+    }
+    .call-lang-select option { background: #0f172a; color: var(--text); }
+    /* Only choosable before the call — hide while ringing / connected */
+    .call-overlay.calling .call-lang,
+    .call-overlay.connected .call-lang { display: none; }
+
+    /* ══════════════════════════════════════════════════════════════════════
+       MOBILE LAYOUT — phone-sized window or a real phone browser
+       ══════════════════════════════════════════════════════════════════════ */
+    * { -webkit-tap-highlight-color: transparent; }
+
+    @media (max-width: 640px) {
+      #conference-container { height: 100dvh; }
+
+      /* Top bar: compact, title hidden, safe-area aware */
+      .top-bar {
+        height: auto;
+        padding: calc(10px + env(safe-area-inset-top)) 12px 18px;
+      }
+      .meeting-info { gap: 8px; }
+      .meeting-title { display: none; }
+      .live-badge { padding: 3px 8px; font-size: 10px; }
+      .timer-badge { font-size: 11px; padding: 3px 6px; }
+      .status-chip { padding: 4px 10px !important; font-size: 10px !important; }
+
+      /* Camera tile: small portrait PIP under the top bar */
+      .participant-tile.pip-tile {
+        top: calc(52px + env(safe-area-inset-top));
+        right: 12px;
+        width: 104px;
+        height: 140px;
+        border-radius: 14px;
+      }
+      .pip-swap-badge { display: none !important; }
+      .participant-tile.pip-tile .host-cam-off-hint { display: none; }
+      .participant-tile.pip-tile .self-avatar-circle { width: 44px; height: 44px; font-size: 12px; }
+      .participant-tile.pip-tile .character-badge { display: none; }
+
+      /* Name badge sits just above the dock */
+      .character-badge {
+        left: 12px;
+        right: 12px;
+        bottom: calc(96px + env(safe-area-inset-bottom));
+        padding: 6px 12px;
+        gap: 10px;
+        border-radius: 12px;
+      }
+      .char-sub { font-size: 10px; }
+
+      /* Dock: full-width bottom bar, icon buttons that share the space */
+      .conference-dock {
+        left: 8px;
+        right: 8px;
+        bottom: calc(10px + env(safe-area-inset-bottom));
+        transform: none;
+        gap: 4px;
+        padding: 8px;
+        border-radius: 24px;
+        justify-content: space-between;
+      }
+      .dock-divider { display: none; }
+      .dock-btn {
+        flex: 1 1 0;
+        min-width: 0;
+        height: 58px;
+        padding: 0;
+        border-radius: 16px;
+      }
+      .dock-btn.interrupt-btn, .dock-btn.leave-btn {
+        padding: 0;
+        min-width: 0;
+        border-radius: 16px;
+      }
+      .participant-tile.pip-tile .self-name-label {
+        left: 6px;
+        right: 6px;
+        bottom: 6px;
+        justify-content: center;
+        font-size: 10px;
+        padding: 2px 6px;
+      }
+      .dock-btn svg { width: 22px; height: 22px; }
+      .dock-btn .btn-label { font-size: 9px; margin-top: 4px; white-space: nowrap; }
+
+      /* Chat: bottom sheet instead of a side drawer */
+      .chat-drawer {
+        top: auto;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: auto;
+        height: 72dvh;
+        border-radius: 22px 22px 0 0;
+        border-bottom: none;
+        transform: translateY(105%);
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+      .chat-drawer.open { transform: translateY(0); }
+      .drawer-header { position: relative; padding: 18px 16px 12px; }
+      .drawer-header::before {           /* grab handle */
+        content: "";
+        position: absolute;
+        top: 7px;
+        left: 50%;
+        width: 40px;
+        height: 4px;
+        margin-left: -20px;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.25);
+      }
+      .drawer-title { font-size: 13px; }
+      .chat-input { font-size: 16px; }   /* stops iOS zooming on focus */
+
+      /* Settings: bottom sheet too */
+      .modal-overlay { align-items: flex-end; }
+      .modal-card {
+        width: 100%;
+        max-height: 85dvh;
+        overflow-y: auto;
+        border-radius: 22px 22px 0 0;
+        padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+      }
+      .form-select { font-size: 16px; }
+
+      /* Call / sleeping screen */
+      .call-card {
+        width: calc(100% - 32px);
+        padding: 32px 20px;
+        border-radius: 24px;
+      }
+      .avatar-ring-container { width: 120px; height: 120px; margin-bottom: 18px; }
+      .call-avatar-circle { width: 92px; height: 92px; font-size: 36px; }
+      .call-title { font-size: 26px; }
+      .call-desc { font-size: 13px; margin-bottom: 22px; }
+      .call-act-btn .act-icon-wrap { width: 72px; height: 72px; }
+    }
+
+    /* Touch screens: no hover lift, a press-down instead */
+    @media (hover: none) {
+      .dock-btn:hover, .participant-tile.pip-tile:hover, .call-act-btn:hover {
+        transform: none;
+        box-shadow: none;
+      }
+      .dock-btn:active { transform: scale(0.94); }
+      .call-act-btn:active { transform: scale(0.94); }
+    }
   </style>
 </head>
 <body>
@@ -1176,24 +1386,35 @@
           <div class="ring-pulse r2"></div>
           <div class="ring-pulse r3"></div>
           <div class="call-avatar-circle">
-            <span class="call-avatar-initial">Z</span>
+            <span class="call-avatar-initial">I</span>
           </div>
         </div>
 
         <div class="call-info">
-          <h2 class="call-title">ZainAI</h2>
-          <span class="call-subtitle">Mark-LVI Autonomous Assistant</span>
+          <h2 class="call-title">Ilubot</h2>
+          <span class="call-subtitle">Screen &amp; Camera Tutor</span>
           <div class="call-status-pill" id="call-status-pill">
             <span class="call-status-dot"></span>
             <span id="call-status-text">Standby Mode</span>
           </div>
-          <p class="call-desc" id="call-desc">Click the button below to initiate a live audio-visual call with ZainAI.</p>
+          <p class="call-desc" id="call-desc">Click the button below to initiate a live audio-visual call with Ilubot.</p>
         </div>
+
+        <!-- Teaching language — chosen before the call starts -->
+        <label class="call-lang" for="call-lang-select">
+          <span class="call-lang-label">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            Teaching language
+          </span>
+          <select id="call-lang-select" class="call-lang-select" aria-label="Teaching language">
+            <option value="English">English</option>
+          </select>
+        </label>
 
         <!-- Action Buttons: Call vs Cancel -->
         <div class="call-actions">
           <!-- Button 1: Start Call (visible in Standby / Sleeping mode) -->
-          <button id="btn-start-call" class="call-act-btn start-call" title="Start Call with ZainAI">
+          <button id="btn-start-call" class="call-act-btn start-call" title="Start Call with Ilubot">
             <div class="act-icon-wrap">
               <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
             </div>
@@ -1215,7 +1436,7 @@
     <header class="top-bar">
       <div class="meeting-info">
         <span class="live-badge"><span class="live-dot"></span> LIVE CALL</span>
-        <span class="meeting-title">ZainAI Conference Room</span>
+        <span class="meeting-title">Ilubot Conference Room</span>
         <span class="timer-badge" id="call-timer">00:00:00</span>
       </div>
 
@@ -1229,17 +1450,19 @@
 
     <!-- Stage Area with Dynamic Spotlight / PIP Swapping -->
     <main id="stage-area">
-      <!-- Participant 1: ZainAI 3D Stage -->
-      <div id="tile-ai" class="participant-tile main-tile" title="Click to spotlight ZainAI">
+      <!-- Participant 1: Ilubot 3D Stage -->
+      <div id="tile-ai" class="participant-tile main-tile" title="Click to spotlight Ilubot">
+        <canvas id="brain-canvas"></canvas>
+        <canvas id="ilubot-canvas"></canvas>
         <canvas id="three-canvas"></canvas>
         <div class="stage-vignette"></div>
 
         <!-- Character Info Overlay -->
         <div class="character-badge" id="ai-badge">
-          <div class="char-avatar-ring">Z</div>
+          <div class="char-avatar-ring">I</div>
           <div class="char-text">
             <div class="char-name">
-              <span>ZainAI</span>
+              <span>Ilubot</span>
               <div class="voice-visualizer" id="ai-voice-bars">
                 <span class="v-bar"></span>
                 <span class="v-bar"></span>
@@ -1247,7 +1470,7 @@
                 <span class="v-bar"></span>
               </div>
             </div>
-            <span class="char-sub">Mark-LVI Autonomous Assistant</span>
+            <span class="char-sub">Screen &amp; Camera Tutor</span>
           </div>
         </div>
 
@@ -1336,13 +1559,13 @@
 
       <div class="drawer-body" id="chat-body">
         <div class="chat-msg system">
-          <div class="msg-bubble">Conference session established with ZainAI. Speak or type below.</div>
+          <div class="msg-bubble">Conference session established with Ilubot. Speak or type below.</div>
         </div>
       </div>
 
       <div class="drawer-footer">
         <form class="input-form" id="chat-form">
-          <input type="text" class="chat-input" id="chat-input" placeholder="Send a message to ZainAI..." autocomplete="off">
+          <input type="text" class="chat-input" id="chat-input" placeholder="Send a message to Ilubot..." autocomplete="off">
           <button type="submit" class="send-btn">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           </button>
@@ -1361,6 +1584,15 @@
         </div>
 
         <div class="form-group">
+          <label class="form-label">Visual Style</label>
+          <select class="form-select" id="stage-style-select">
+            <option value="brain">Neural Brain (animated, reacts to voice)</option>
+            <option value="ilubot">Ilubot (animated HUD rings, reacts to voice)</option>
+            <option value="avatar">3D Avatar (ZainAI.glb)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
           <label class="form-label">Voice Selection</label>
           <select class="form-select" id="voice-select">
             <option value="Puck">Puck (Default, Expressive)</option>
@@ -1374,7 +1606,7 @@
         <div class="form-switch">
           <div>
             <div class="switch-label">Wake Word Detection</div>
-            <div class="switch-desc">Respond to "Hey Jarvis" / "Hey Zain"</div>
+            <div class="switch-desc">Respond to "Hey Jarvis"</div>
           </div>
           <input type="checkbox" id="wake-toggle" checked>
         </div>
@@ -1402,7 +1634,7 @@
       aiState: 'LISTENING',
       audioLevel: 0.0,
       speakingLevel: 0.0,
-      // 15 Oculus Visemes (native to Avaturn ZainAI mesh)
+      // 15 Oculus Visemes (native to Avaturn Ilubot mesh)
       visemeCurrent: {
         viseme_sil: 0.0,
         viseme_PP: 0.0,
@@ -1529,9 +1761,9 @@
     function loadAvatar() {
       const loader = new THREE.GLTFLoader();
       const loadingMsg = document.getElementById('loading-msg');
-      loadingMsg.innerText = 'Loading 3D Character (lipsync_eyes.glb)...';
+      loadingMsg.innerText = 'Loading 3D Character (ZainAI.glb)...';
 
-      loader.load('/avatar/lipsync_eyes.glb', (gltf) => {
+      loader.load('/avatar/ZainAI.glb', (gltf) => {
         avatarModel = gltf.scene;
         avatarModel.position.set(0, 0, 0);
         // Orient avatar directly forward: the Maya idle animation baked a -29.2° yaw turn.
@@ -1786,9 +2018,19 @@
     function animate() {
       requestAnimationFrame(animate);
       const dt = clock.getDelta();
+      // The brain stage owns the screen: skip all 3D work while it is shown.
+      if (stageStyle !== 'avatar') return;
 
       if (mixer) {
         mixer.update(dt);
+      }
+
+      // Puppet lip sync fallback: models without viseme blendshapes "talk" by tilting the head bone.
+      if (headBone && morphMeshes.length === 0) {
+        const open = Math.min(1, (state.visemeCurrent.viseme_aa || 0) + (state.visemeCurrent.viseme_O || 0) +
+          (state.visemeCurrent.viseme_E || 0) * 0.7 + (state.visemeCurrent.viseme_I || 0) * 0.5 +
+          (state.visemeCurrent.viseme_U || 0) * 0.6);
+        headBone.rotateX(-open * 0.22);
       }
 
       if (controls) {
@@ -1819,6 +2061,984 @@
         }
         bar.style.height = `${height}px`;
       });
+    }
+
+    // ── Neural Brain Stage ────────────────────────────────────────────────────────
+    // A holographic brain drawn on a 2D canvas. No model file, no WebGL: it pulses,
+    // sparks and lights up in rhythm with the assistant's voice (state.speakingLevel)
+    // and recolours with its state (listening / thinking / speaking / sleeping).
+    const BrainStage = (() => {
+      const canvas = document.getElementById('brain-canvas');
+      const ctx = canvas.getContext('2d');
+      const TAU = Math.PI * 2;
+      let W = 0, H = 0, dpr = 1;
+      let running = false, raf = 0, lastT = 0, t = 0;
+      let lvl = 0, energy = 0.4, beat = 0, prevRaw = 0;
+      let accent = [0, 210, 255];
+      let brainLayer = null, brainKey = '';
+      let bgLayer = null, bgKey = '';
+      let gyri = [];
+      let sparks = [], rings = [], dust = [];
+      const spectrum = new Array(14).fill(0.2);
+      const glowSprite = makeGlowSprite();
+      const VIOLET = [150, 95, 255];
+      const STATE_ACCENT = {
+        LISTENING: [0, 210, 255],
+        SPEAKING:  [90, 235, 255],
+        THINKING:  [185, 110, 255],
+        SLEEPING:  [70, 100, 185],
+      };
+      const STATE_ENERGY = { LISTENING: 0.42, SPEAKING: 0.6, THINKING: 0.8, SLEEPING: 0.12 };
+
+      // Seeded RNG so the brain's folds are identical every launch.
+      let seed = 1337;
+      const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+      const rgba = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+      const mix = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+
+      // ── Brain geometry in unit space (x: -1 front .. +1 back, y down) ──
+      const cerebrumBottom = (x) => 0.30 + 0.10 * Math.cos((x + 0.1) * 2.6);
+      const inCerebrum = (x, y) => x * x + ((y + 0.06) / 0.68) ** 2 <= 1 && y <= cerebrumBottom(x);
+      const inCerebellum = (x, y) => ((x - 0.52) / 0.34) ** 2 + ((y - 0.40) / 0.19) ** 2 <= 1;
+      const inStem = (x, y) => {
+        if (y < 0.30 || y > 0.88) return false;
+        const c = 0.22 + (y - 0.30) * 0.12, half = 0.085 - (y - 0.30) * 0.03;
+        return Math.abs(x - c) < half;
+      };
+
+      function silhouette(k) {
+        const p = new Path2D();
+        const N = 120;
+        for (let i = 0; i <= N; i++) {
+          const a = (i / N) * TAU;
+          const x = Math.cos(a);
+          let y = Math.sin(a) * 0.68 - 0.06;
+          y = Math.min(y, cerebrumBottom(x));
+          if (i === 0) p.moveTo(x * k, y * k); else p.lineTo(x * k, y * k);
+        }
+        p.closePath();
+        p.ellipse(0.52 * k, 0.40 * k, 0.34 * k, 0.19 * k, 0, 0, TAU);
+        p.moveTo(0.135 * k, 0.30 * k);
+        p.lineTo(0.305 * k, 0.30 * k);
+        p.lineTo((0.22 + 0.58 * 0.12 + 0.068) * k, 0.88 * k);
+        p.lineTo((0.22 + 0.58 * 0.12 - 0.068) * k, 0.88 * k);
+        p.closePath();
+        return p;
+      }
+
+      function buildGyri() {
+        seed = 1337;
+        gyri = [];
+        // Cerebrum: meandering folds (random walks that curl back on themselves).
+        for (let n = 0; n < 95; n++) {
+          let x, y, tries = 0;
+          do { x = rnd() * 2 - 1; y = rnd() * 1.4 - 0.74; tries++; } while (!inCerebrum(x, y) && tries < 50);
+          if (!inCerebrum(x, y)) continue;
+          let ang = rnd() * TAU;
+          const phase = rnd() * TAU, curl = 0.45 + rnd() * 0.35;
+          const pts = [[x, y]];
+          const steps = 10 + (rnd() * 18) | 0;
+          for (let s = 0; s < steps; s++) {
+            ang += Math.sin(s * 0.55 + phase) * curl + (rnd() - 0.5) * 0.5;
+            x += Math.cos(ang) * 0.034; y += Math.sin(ang) * 0.034;
+            if (!inCerebrum(x, y)) break;
+            pts.push([x, y]);
+          }
+          if (pts.length > 4) gyri.push({ pts, kind: 0 });
+        }
+        // Main fissures give it the recognisable brain read.
+        const lateral = [], central = [];
+        for (let i = 0; i <= 24; i++) {
+          const u = i / 24;
+          lateral.push([-0.42 + u * 0.80, 0.20 - u * 0.30 + Math.sin(u * 9) * 0.02]);
+          central.push([0.08 - u * 0.22 + Math.sin(u * 11) * 0.025, -0.70 + u * 0.82]);
+        }
+        gyri.push({ pts: lateral, kind: 2 }, { pts: central, kind: 2 });
+        // Cerebellum: fine parallel folia.
+        for (let yy = 0.25; yy <= 0.58; yy += 0.032) {
+          let seg = [];
+          for (let xx = 0.16; xx <= 0.88; xx += 0.012) {
+            const y = yy + Math.sin(xx * 34 + yy * 20) * 0.008 + (xx - 0.52) * 0.08;
+            if (inCerebellum(xx, y)) seg.push([xx, y]);
+            else if (seg.length) { if (seg.length > 4) gyri.push({ pts: seg, kind: 1 }); seg = []; }
+          }
+          if (seg.length > 4) gyri.push({ pts: seg, kind: 1 });
+        }
+        // Brain stem.
+        for (let j = -1; j <= 1; j++) {
+          const pts = [];
+          for (let y = 0.34; y <= 0.86; y += 0.03) pts.push([0.22 + (y - 0.30) * 0.12 + j * 0.03, y]);
+          gyri.push({ pts, kind: 1 });
+        }
+        for (const g of gyri) {
+          let len = 0;
+          for (let i = 1; i < g.pts.length; i++) len += Math.hypot(g.pts[i][0] - g.pts[i - 1][0], g.pts[i][1] - g.pts[i - 1][1]);
+          g.len = Math.max(len, 0.01);
+        }
+      }
+
+      function strokeCurves(c, k, filter, offX = 0, offY = 0) {
+        c.beginPath();
+        for (const g of gyri) {
+          if (!filter(g)) continue;
+          const p = g.pts;
+          c.moveTo(p[0][0] * k + offX, p[0][1] * k + offY);
+          for (let i = 1; i < p.length; i++) c.lineTo(p[i][0] * k + offX, p[i][1] * k + offY);
+        }
+        c.stroke();
+      }
+
+      // Pre-render the static brain once per size; each frame only blits it.
+      function getBrainLayer(k) {
+        const key = `${Math.round(k)}@${dpr}`;
+        if (brainLayer && brainKey === key) return brainLayer;
+        const w = Math.ceil(2.3 * k), h = Math.ceil(2.0 * k);
+        const off = document.createElement('canvas');
+        off.width = Math.ceil(w * dpr); off.height = Math.ceil(h * dpr);
+        const c = off.getContext('2d');
+        c.scale(dpr, dpr);
+        const ox = w / 2, oy = h / 2 - 0.08 * k;
+        c.translate(ox, oy);
+        const sil = silhouette(k);
+
+        const body = c.createRadialGradient(-0.2 * k, -0.25 * k, 0.05 * k, 0, 0, 1.1 * k);
+        body.addColorStop(0, 'rgba(110,140,255,0.95)');
+        body.addColorStop(0.55, 'rgba(70,80,220,0.9)');
+        body.addColorStop(1, 'rgba(95,45,200,0.9)');
+        c.fillStyle = body;
+        c.fill(sil);
+
+        c.save();
+        c.clip(sil);
+        c.lineCap = 'round'; c.lineJoin = 'round';
+        // Raised folds, dark grooves, then a lit edge on top of each fold.
+        c.strokeStyle = 'rgba(175,195,255,0.42)'; c.lineWidth = 0.075 * k;
+        strokeCurves(c, k, g => g.kind === 0);
+        c.lineWidth = 0.02 * k;
+        strokeCurves(c, k, g => g.kind === 1);
+        c.strokeStyle = 'rgba(18,16,70,0.55)'; c.lineWidth = 0.016 * k;
+        strokeCurves(c, k, g => g.kind !== 2);
+        c.strokeStyle = 'rgba(12,10,50,0.85)'; c.lineWidth = 0.024 * k;
+        strokeCurves(c, k, g => g.kind === 2);
+        c.strokeStyle = 'rgba(225,238,255,0.50)'; c.lineWidth = 0.010 * k;
+        strokeCurves(c, k, g => g.kind === 0, -0.014 * k, -0.018 * k);
+
+        c.globalCompositeOperation = 'source-atop';
+        const tint = c.createLinearGradient(-k, 0, k, 0);
+        tint.addColorStop(0, 'rgba(0,210,255,0.30)');
+        tint.addColorStop(0.5, 'rgba(90,110,255,0.05)');
+        tint.addColorStop(1, 'rgba(180,80,255,0.35)');
+        c.fillStyle = tint;
+        c.fillRect(-1.2 * k, -k, 2.4 * k, 2 * k);
+        const spec = c.createRadialGradient(-0.35 * k, -0.45 * k, 0, -0.35 * k, -0.45 * k, 0.7 * k);
+        spec.addColorStop(0, 'rgba(255,255,255,0.28)');
+        spec.addColorStop(1, 'rgba(255,255,255,0)');
+        c.fillStyle = spec;
+        c.fillRect(-1.2 * k, -k, 2.4 * k, 2 * k);
+        const rim = c.createRadialGradient(0, 0, 0.55 * k, 0, 0, 1.05 * k);
+        rim.addColorStop(0, 'rgba(10,8,40,0)');
+        rim.addColorStop(1, 'rgba(10,8,40,0.45)');
+        c.fillStyle = rim;
+        c.fillRect(-1.2 * k, -k, 2.4 * k, 2 * k);
+        c.restore();
+
+        c.strokeStyle = 'rgba(190,215,255,0.75)';
+        c.lineWidth = 0.012 * k;
+        c.stroke(sil);
+
+        brainLayer = { canvas: off, w, h, ox, oy };
+        brainKey = key;
+        return brainLayer;
+      }
+
+      // Background: deep navy, faint dotted "world map" and grid. Cached per size.
+      function getBgLayer() {
+        const key = `${W}x${H}@${dpr}`;
+        if (bgLayer && bgKey === key) return bgLayer;
+        const off = document.createElement('canvas');
+        off.width = Math.ceil(W * dpr); off.height = Math.ceil(H * dpr);
+        const c = off.getContext('2d');
+        c.scale(dpr, dpr);
+        const g = c.createRadialGradient(W / 2, H * 0.48, 0, W / 2, H * 0.48, Math.max(W, H) * 0.75);
+        g.addColorStop(0, '#0d1c4a');
+        g.addColorStop(0.55, '#081233');
+        g.addColorStop(1, '#040713');
+        c.fillStyle = g;
+        c.fillRect(0, 0, W, H);
+        const step = Math.max(6, Math.min(W, H) / 90);
+        for (let y = H * 0.18; y < H * 0.78; y += step) {
+          for (let x = W * 0.08; x < W * 0.92; x += step) {
+            const u = (x / W) * 6.2, v = (y / H) * 6.2;
+            const land = Math.sin(u * 1.1) + Math.sin(v * 1.7 + u * 0.6) + Math.sin((u - v) * 0.9 + 1.3) * 0.8;
+            const ex = (x - W / 2) / (W * 0.42), ey = (y - H * 0.48) / (H * 0.30);
+            const fade = 1 - (ex * ex + ey * ey);
+            if (land > 0.85 && fade > 0) {
+              c.fillStyle = `rgba(90,150,255,${0.10 + fade * 0.18})`;
+              c.fillRect(x, y, 1.6, 1.6);
+            }
+          }
+        }
+        bgLayer = off; bgKey = key;
+        return bgLayer;
+      }
+
+      function makeGlowSprite() {
+        const s = document.createElement('canvas');
+        s.width = s.height = 64;
+        const c = s.getContext('2d');
+        const g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+        g.addColorStop(0, 'rgba(255,255,255,1)');
+        g.addColorStop(0.25, 'rgba(160,230,255,0.85)');
+        g.addColorStop(1, 'rgba(0,160,255,0)');
+        c.fillStyle = g;
+        c.fillRect(0, 0, 64, 64);
+        return s;
+      }
+
+      function resize() {
+        const host = canvas.parentElement;
+        const w = Math.max(1, host.clientWidth), h = Math.max(1, host.clientHeight);
+        const d = Math.min(window.devicePixelRatio || 1, 2);
+        if (w === W && h === H && d === dpr) return;
+        W = w; H = h; dpr = d;
+        canvas.width = Math.round(W * dpr);
+        canvas.height = Math.round(H * dpr);
+        dust = [];
+        for (let i = 0; i < 70; i++) dust.push({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 1.4 + 0.3, v: Math.random() * 8 + 3, a: Math.random() * 0.5 + 0.15 });
+      }
+
+      function rr(x, y, w, h, r) {
+        ctx.beginPath();
+        if (ctx.roundRect) { ctx.roundRect(x, y, w, h, r); return; }
+        ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+      }
+
+      function drawPanel(p, i, acc) {
+        const { x, y, w, h, type } = p;
+        const pad = w * 0.07;
+        rr(x, y, w, h, 10);
+        const bg = ctx.createLinearGradient(x, y, x + w, y + h);
+        bg.addColorStop(0, 'rgba(20,40,95,0.55)');
+        bg.addColorStop(1, 'rgba(10,20,55,0.35)');
+        ctx.fillStyle = bg;
+        ctx.fill();
+        ctx.strokeStyle = rgba(acc, 0.35 + energy * 0.25);
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        // header strip
+        ctx.fillStyle = rgba(acc, 0.55);
+        ctx.fillRect(x + pad, y + pad, w * 0.32, 3);
+        ctx.fillStyle = 'rgba(255,255,255,0.18)';
+        ctx.fillRect(x + pad + w * 0.36, y + pad, w * 0.18, 3);
+
+        const ix = x + pad, iy = y + pad * 2.2, iw = w - pad * 2, ih = h - pad * 3.2;
+        if (type === 'bars') {
+          const n = 10, bw = iw / n * 0.62;
+          for (let b = 0; b < n; b++) {
+            const v = spectrum[(b + i * 3) % spectrum.length];
+            const bh = Math.max(3, v * ih);
+            const gx = ix + (b + 0.2) * (iw / n);
+            const gr = ctx.createLinearGradient(0, iy + ih, 0, iy + ih - bh);
+            gr.addColorStop(0, rgba(acc, 0.35));
+            gr.addColorStop(1, rgba(mix(acc, [255, 255, 255], 0.4), 0.95));
+            ctx.fillStyle = gr;
+            ctx.fillRect(gx, iy + ih - bh, bw, bh);
+          }
+          ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+          ctx.beginPath(); ctx.moveTo(ix, iy + ih + 1); ctx.lineTo(ix + iw, iy + ih + 1); ctx.stroke();
+        } else if (type === 'gauge') {
+          const gr = Math.min(ih, iw * 0.45) * 0.48, gx = ix + gr + 2, gy = iy + ih / 2;
+          ctx.lineWidth = gr * 0.18;
+          for (let s = 0; s < 12; s++) {
+            const a0 = s / 12 * TAU + t * 0.4, on = s / 12 < 0.35 + energy * 0.6;
+            ctx.strokeStyle = on ? rgba(acc, 0.85) : 'rgba(255,255,255,0.10)';
+            ctx.beginPath(); ctx.arc(gx, gy, gr, a0, a0 + TAU / 12 * 0.7); ctx.stroke();
+          }
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = rgba(VIOLET, 0.8);
+          ctx.beginPath(); ctx.arc(gx, gy, gr * 0.6, -Math.PI / 2, -Math.PI / 2 + TAU * (0.2 + lvl * 0.8)); ctx.stroke();
+          const rx = gx + gr + pad;
+          for (let r = 0; r < 5; r++) {
+            const ry = iy + (r + 0.5) * (ih / 5);
+            ctx.fillStyle = rgba(acc, 0.8); ctx.fillRect(rx, ry - 1.5, 3, 3);
+            ctx.fillStyle = 'rgba(255,255,255,0.22)';
+            ctx.fillRect(rx + 8, ry - 1, (ix + iw - rx - 8) * (0.4 + 0.5 * spectrum[(r * 2 + 1) % spectrum.length]), 2);
+          }
+        } else {
+          for (let r = 0; r < 6; r++) {
+            const ry = iy + (r + 0.5) * (ih / 6);
+            ctx.fillStyle = rgba(acc, 0.75); ctx.fillRect(ix, ry - 1.5, 3, 3);
+            const long = 0.35 + 0.6 * spectrum[(r * 3 + i) % spectrum.length];
+            ctx.fillStyle = r % 3 === 1 ? rgba(VIOLET, 0.75) : 'rgba(255,255,255,0.2)';
+            ctx.fillRect(ix + 9, ry - (r % 3 === 1 ? 3 : 1), (iw - 9) * long, r % 3 === 1 ? 6 : 2);
+          }
+        }
+      }
+
+      function frame(now) {
+        if (!running) return;
+        raf = requestAnimationFrame(frame);
+        const dt = Math.min(0.05, (now - (lastT || now)) / 1000);
+        lastT = now;
+        t += dt;
+        resize();
+
+        // ── Rhythm: smoothed level, syllable beats, overall energy ──
+        const st = (state.aiState || 'LISTENING').toUpperCase();
+        const speaking = st === 'SPEAKING';
+        const raw = speaking ? Math.max(state.speakingLevel || 0, state.audioLevel || 0) : (state.audioLevel || 0) * 0.35;
+        lvl += (raw - lvl) * Math.min(1, dt * (raw > lvl ? 18 : 6));
+        if (raw - prevRaw > 0.07 && raw > 0.12 && beat < 0.35) {
+          beat = 1;
+          rings.push({ r: 0, a: 0.8 });
+        }
+        prevRaw = raw;
+        beat *= Math.exp(-dt * 5);
+        const key = STATE_ACCENT[st] ? st : (st.includes('THINK') || st.includes('PROCESS') ? 'THINKING' : 'LISTENING');
+        const tgtE = STATE_ENERGY[key] + lvl * 0.6;
+        energy += (tgtE - energy) * Math.min(1, dt * 3);
+        accent = mix(accent, STATE_ACCENT[key], Math.min(1, dt * 4));
+        const acc = accent;
+        for (let s = 0; s < spectrum.length; s++) {
+          const idle = 0.18 + 0.22 * (0.5 + 0.5 * Math.sin(t * (0.9 + s * 0.13) + s * 1.7)) * energy;
+          const target = idle + lvl * (0.35 + Math.random() * 0.6);
+          spectrum[s] += (Math.min(1, target) - spectrum[s]) * Math.min(1, dt * 10);
+        }
+
+        // ── Layout ──
+        const small = W < 520 || H < 360;
+        const showTitle = !small && H > 460;
+        const cx = W / 2, cy = H * (showTitle ? 0.49 : 0.46);
+        const R = small ? Math.min(W, H) * 0.30 : Math.min(W * 0.2, H * 0.25);
+        const k = R * 0.9;
+        const breath = Math.sin(t * (key === 'SLEEPING' ? 0.8 : 1.6)) * 0.018;
+        const scl = 1 + breath + lvl * 0.07 + beat * 0.04;
+
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+        ctx.drawImage(getBgLayer(), 0, 0, W, H);
+
+        // drifting dust
+        for (const d of dust) {
+          d.y -= d.v * dt * (0.5 + energy);
+          if (d.y < -4) { d.y = H + 4; d.x = Math.random() * W; }
+          ctx.fillStyle = `rgba(150,200,255,${d.a * (0.4 + energy * 0.6)})`;
+          ctx.fillRect(d.x, d.y, d.r, d.r);
+        }
+
+        // ── Floor platform ──
+        const fy = cy + R * 1.3, frx = R * 1.5;
+        ctx.globalCompositeOperation = 'lighter';
+        const beam = ctx.createLinearGradient(0, fy, 0, cy - R);
+        beam.addColorStop(0, rgba(acc, 0.10 + lvl * 0.12));
+        beam.addColorStop(1, rgba(acc, 0));
+        ctx.fillStyle = beam;
+        ctx.beginPath();
+        ctx.moveTo(cx - frx * 0.55, fy); ctx.lineTo(cx - R * 0.9, cy - R * 0.6);
+        ctx.lineTo(cx + R * 0.9, cy - R * 0.6); ctx.lineTo(cx + frx * 0.55, fy); ctx.closePath();
+        ctx.fill();
+        const FY = 0.2;  // floor perspective squash
+        ctx.save();
+        ctx.translate(cx, fy); ctx.scale(1, FY);
+        const pool = ctx.createRadialGradient(0, 0, 0, 0, 0, frx * 0.6);
+        pool.addColorStop(0, rgba(mix(acc, [255, 255, 255], 0.3), 0.55 + lvl * 0.35));
+        pool.addColorStop(1, rgba(acc, 0));
+        ctx.fillStyle = pool;
+        ctx.beginPath(); ctx.arc(0, 0, frx * 0.6, 0, TAU); ctx.fill();
+        ctx.restore();
+        for (let i = 0; i < 4; i++) {
+          const rx = frx * (0.45 + i * 0.2);
+          ctx.strokeStyle = rgba(acc, (0.55 - i * 0.11) * (0.6 + energy * 0.5));
+          ctx.lineWidth = i === 0 ? 2 : 1;
+          ctx.beginPath(); ctx.ellipse(cx, fy, rx, rx * FY, 0, 0, TAU); ctx.stroke();
+        }
+        ctx.setLineDash([frx * 0.08, frx * 0.05]);
+        ctx.lineDashOffset = -t * frx * 0.12 * (0.5 + energy);
+        ctx.strokeStyle = rgba(acc, 0.6);
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(cx, fy, frx * 0.72, frx * 0.72 * FY, 0, 0, TAU); ctx.stroke();
+        ctx.setLineDash([]);
+        rings = rings.filter(r => r.a > 0.02);
+        for (const r of rings) {
+          r.r += dt * frx * 1.4; r.a *= Math.exp(-dt * 2.2);
+          const rx = frx * 0.4 + r.r;
+          ctx.strokeStyle = rgba(acc, r.a); ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.ellipse(cx, fy, rx, rx * FY, 0, 0, TAU); ctx.stroke();
+        }
+
+        // ── Panels + connection lines ──
+        const pw = Math.min(W * 0.17, 250), ph = pw * 0.64;
+        const leftX = cx - R * 1.45 - pw;
+        const panels = (!small && leftX > 12) ? [
+          { x: leftX, y: cy - R * 0.85 - ph / 2, w: pw, h: ph, type: 'list' },
+          { x: leftX + pw * 0.05, y: cy + R * 0.55 - ph / 2, w: pw, h: ph, type: 'bars' },
+          { x: cx + R * 1.45, y: cy - R * 0.6 - ph / 2, w: pw, h: ph, type: 'gauge' },
+          { x: cx + R * 1.45 - pw * 0.05, y: cy + R * 0.7 - ph / 2, w: pw, h: ph, type: 'bars' },
+        ] : [];
+        const host = document.getElementById('tile-host');
+        if (host && host.classList.contains('pip-tile') && host.offsetParent) {
+          const cr = canvas.getBoundingClientRect(), hr = host.getBoundingClientRect();
+          const hx0 = hr.left - cr.left, hx1 = hr.right - cr.left, hy0 = hr.top - cr.top, hy1 = hr.bottom - cr.top;
+          for (const p of panels) {
+            if (p.x < hx1 && p.x + p.w > hx0 && p.y < hy1 + 12 && p.y + p.h > hy0) p.y = hy1 + 14;
+          }
+        }
+        panels.forEach((p, i) => { p.y += Math.sin(t * 0.7 + i * 1.3) * 4; });
+        const sphereR = R * 1.12;
+        const links = panels.map((p, i) => {
+          const px = p.x < cx ? p.x + p.w : p.x, py = p.y + p.h / 2;
+          const a = Math.atan2(py - cy, px - cx);
+          return { x0: cx + Math.cos(a) * sphereR, y0: cy + Math.sin(a) * sphereR, x1: px, y1: py, i };
+        });
+        // decorative short spokes ending in nodes
+        for (let s = 0; s < 6; s++) {
+          const a = -0.9 + s * 0.36 + (s > 2 ? Math.PI - 0.35 : 0);
+          const len = R * (0.25 + (s % 3) * 0.12);
+          links.push({ x0: cx + Math.cos(a) * sphereR, y0: cy + Math.sin(a) * sphereR, x1: cx + Math.cos(a) * (sphereR + len), y1: cy + Math.sin(a) * (sphereR + len), i: s + 4, deco: true });
+        }
+        ctx.lineWidth = 1;
+        for (const l of links) {
+          ctx.strokeStyle = rgba(acc, l.deco ? 0.30 : 0.45);
+          ctx.beginPath(); ctx.moveTo(l.x0, l.y0); ctx.lineTo(l.x1, l.y1); ctx.stroke();
+          const sz = 10 + energy * 6;
+          ctx.drawImage(glowSprite, l.x1 - sz / 2, l.y1 - sz / 2, sz, sz);
+          const u = (t * (0.35 + energy * 0.9) + l.i * 0.37) % 1;
+          const qs = 8 + lvl * 14;
+          ctx.drawImage(glowSprite, l.x0 + (l.x1 - l.x0) * u - qs / 2, l.y0 + (l.y1 - l.y0) * u - qs / 2, qs, qs);
+        }
+        ctx.globalCompositeOperation = 'source-over';
+        panels.forEach((p, i) => drawPanel(p, i, acc));
+
+        // ── Holographic sphere ──
+        ctx.globalCompositeOperation = 'lighter';
+        const halo = ctx.createRadialGradient(cx, cy, sphereR * 0.6, cx, cy, sphereR * 1.5);
+        halo.addColorStop(0, rgba(acc, 0));
+        halo.addColorStop(0.45, rgba(acc, 0.10 + energy * 0.10 + beat * 0.08));
+        halo.addColorStop(1, rgba(acc, 0));
+        ctx.fillStyle = halo;
+        ctx.beginPath(); ctx.arc(cx, cy, sphereR * 1.5, 0, TAU); ctx.fill();
+        const shell = ctx.createRadialGradient(cx - sphereR * 0.3, cy - sphereR * 0.35, sphereR * 0.1, cx, cy, sphereR);
+        shell.addColorStop(0, 'rgba(120,160,255,0.06)');
+        shell.addColorStop(0.8, rgba(acc, 0.07));
+        shell.addColorStop(1, rgba(mix(acc, VIOLET, 0.4), 0.30));
+        ctx.fillStyle = shell;
+        ctx.beginPath(); ctx.arc(cx, cy, sphereR, 0, TAU); ctx.fill();
+        ctx.lineWidth = 1;
+        for (let m = 0; m < 6; m++) {
+          const a = t * 0.18 + m * Math.PI / 6;
+          ctx.strokeStyle = rgba(acc, 0.07);
+          ctx.beginPath(); ctx.ellipse(cx, cy, Math.abs(Math.cos(a)) * sphereR, sphereR, 0, 0, TAU); ctx.stroke();
+        }
+        for (let la = -2; la <= 2; la++) {
+          const phi = la * 0.45, yy = cy + Math.sin(phi) * sphereR, rx = Math.cos(phi) * sphereR;
+          ctx.strokeStyle = rgba(acc, 0.06);
+          ctx.beginPath(); ctx.ellipse(cx, yy, rx, rx * 0.12, 0, 0, TAU); ctx.stroke();
+        }
+        ctx.strokeStyle = rgba(mix(acc, [255, 255, 255], 0.3), 0.55 + beat * 0.3);
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(cx, cy, sphereR, 0, TAU); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(cx, cy, sphereR * 0.94, Math.PI * 1.08, Math.PI * 1.38); ctx.stroke();
+
+        // ── Brain ──
+        ctx.globalCompositeOperation = 'source-over';
+        const L = getBrainLayer(k);
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(scl, scl);
+        ctx.drawImage(L.canvas, -L.ox, -L.oy, L.w, L.h);
+        // speech flush: re-add the brain additively so it brightens on each syllable
+        const flush = Math.min(0.42, lvl * 0.4 + beat * 0.18 + (key === 'THINKING' ? 0.12 + 0.08 * Math.sin(t * 6) : 0));
+        if (flush > 0.02) {
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.globalAlpha = flush;
+          ctx.drawImage(L.canvas, -L.ox, -L.oy, L.w, L.h);
+          ctx.globalAlpha = 1;
+        }
+        ctx.restore();
+
+        // ── Neural sparks racing along the folds ──
+        ctx.globalCompositeOperation = 'lighter';
+        const spawn = (1.5 + energy * 10 + lvl * 60) * dt;
+        let toSpawn = Math.floor(spawn) + (Math.random() < spawn % 1 ? 1 : 0);
+        while (toSpawn-- > 0 && sparks.length < 220) {
+          sparks.push({ g: gyri[(Math.random() * gyri.length) | 0], p: 0, v: 0.5 + Math.random() * 0.9 });
+        }
+        sparks = sparks.filter(s => s.p < 1);
+        for (const s of sparks) {
+          s.p += dt * s.v * (0.6 + energy) * (0.35 / s.g.len + 0.4);
+          const pts = s.g.pts, f = Math.min(0.999, s.p) * (pts.length - 1), i0 = f | 0, fr = f - i0;
+          const ux = pts[i0][0] + (pts[i0 + 1][0] - pts[i0][0]) * fr;
+          const uy = pts[i0][1] + (pts[i0 + 1][1] - pts[i0][1]) * fr;
+          const a = Math.sin(s.p * Math.PI);
+          const sz = (6 + lvl * 10) * (0.6 + a);
+          ctx.globalAlpha = a * 0.9;
+          ctx.drawImage(glowSprite, cx + ux * k * scl - sz / 2, cy + uy * k * scl - sz / 2, sz, sz);
+        }
+        ctx.globalAlpha = 1;
+
+        // ── Core: the bright heart of the brain ──
+        const ccx = cx + 0.02 * k * scl, ccy = cy - 0.04 * k * scl;
+        const coreR = R * (0.07 + lvl * 0.11 + beat * 0.05 + energy * 0.03);
+        const cg = ctx.createRadialGradient(ccx, ccy, 0, ccx, ccy, coreR * 3.2);
+        cg.addColorStop(0, 'rgba(255,255,255,0.95)');
+        cg.addColorStop(0.18, rgba(mix(acc, [255, 255, 255], 0.5), 0.8));
+        cg.addColorStop(0.5, rgba(acc, 0.25));
+        cg.addColorStop(1, rgba(acc, 0));
+        ctx.fillStyle = cg;
+        ctx.beginPath(); ctx.arc(ccx, ccy, coreR * 3.2, 0, TAU); ctx.fill();
+        ctx.strokeStyle = rgba(mix(acc, [255, 255, 255], 0.4), 0.55);
+        ctx.lineWidth = 1.2;
+        const spin = t * (key === 'THINKING' ? 2.4 : 0.8);
+        for (let r = 0; r < 12; r++) {
+          const a = spin + r * TAU / 12, r0 = coreR * 1.3, r1 = coreR * (1.9 + lvl * 1.5 + (r % 2) * 0.4);
+          ctx.beginPath();
+          ctx.moveTo(ccx + Math.cos(a) * r0, ccy + Math.sin(a) * r0);
+          ctx.lineTo(ccx + Math.cos(a) * r1, ccy + Math.sin(a) * r1);
+          ctx.stroke();
+        }
+        ctx.setLineDash([4, 6]);
+        ctx.lineDashOffset = -spin * 20;
+        ctx.beginPath(); ctx.arc(ccx, ccy, coreR * 2.4, 0, TAU); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalCompositeOperation = 'source-over';
+
+        // ── Title ──
+        if (showTitle) {
+          const name = (document.querySelector('.char-name span') || {}).textContent || 'Ilubot';
+          const fs = Math.max(22, Math.min(42, W * 0.032));
+          ctx.font = `700 ${fs}px -apple-system, "Segoe UI", Inter, system-ui, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.shadowColor = rgba(acc, 0.8);
+          ctx.shadowBlur = 18 + lvl * 20;
+          ctx.fillStyle = '#ffffff';
+          const nm = name.trim();
+          ctx.fillText(/ai$/i.test(nm) ? `${nm} Assistant` : `${nm} AI Assistant`, cx, Math.max(fs * 1.4, H * 0.1));
+          ctx.shadowBlur = 0;
+        }
+
+        updateVoiceBars();
+      }
+
+      buildGyri();
+      return {
+        start() {
+          if (running) return;
+          running = true; lastT = 0;
+          raf = requestAnimationFrame(frame);
+        },
+        stop() {
+          running = false;
+          cancelAnimationFrame(raf);
+        },
+      };
+    })();
+
+    // ── Ilubot HUD Stage ──────────────────────────────────────────────────────────
+    // Concentric holographic rings over a faint blueprint backdrop. Ticks act as a
+    // radial equaliser, the segmented band fills and the amber arc stretches with
+    // the voice; rings counter-rotate and speed up while thinking.
+    const IlubotStage = (() => {
+      const canvas = document.getElementById('ilubot-canvas');
+      const ctx = canvas.getContext('2d');
+      const TAU = Math.PI * 2;
+      let W = 0, H = 0, dpr = 1;
+      let running = false, raf = 0, lastT = 0, t = 0;
+      let lvl = 0, energy = 0.4, beat = 0, prevRaw = 0, spin = 0;
+      let accent = [80, 220, 255];
+      let bgLayer = null, bgKey = '';
+      let rings = [];
+      const startedAt = Date.now();
+      const AMBER = [255, 186, 60];
+      const STATE_ACCENT = {
+        LISTENING: [80, 220, 255],
+        SPEAKING:  [120, 235, 255],
+        THINKING:  [255, 196, 90],
+        SLEEPING:  [60, 120, 150],
+      };
+      const STATE_ENERGY = { LISTENING: 0.42, SPEAKING: 0.6, THINKING: 0.85, SLEEPING: 0.12 };
+      const NT = 120;
+      const ticks = new Array(NT).fill(0);
+      const rgba = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+      const mix = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+
+      function resize() {
+        const host = canvas.parentElement;
+        const w = Math.max(1, host.clientWidth), h = Math.max(1, host.clientHeight);
+        const d = Math.min(window.devicePixelRatio || 1, 2);
+        if (w === W && h === H && d === dpr) return;
+        W = w; H = h; dpr = d;
+        canvas.width = Math.round(W * dpr);
+        canvas.height = Math.round(H * dpr);
+      }
+
+      // Blueprint backdrop: grid, schematic shapes and labels. Cached per size.
+      function getBg() {
+        const key = `${W}x${H}@${dpr}`;
+        if (bgLayer && bgKey === key) return bgLayer;
+        const off = document.createElement('canvas');
+        off.width = Math.ceil(W * dpr); off.height = Math.ceil(H * dpr);
+        const c = off.getContext('2d');
+        c.scale(dpr, dpr);
+        const g = c.createRadialGradient(W / 2, H * 0.47, 0, W / 2, H * 0.47, Math.max(W, H) * 0.7);
+        g.addColorStop(0, '#0d2a35');
+        g.addColorStop(0.6, '#061419');
+        g.addColorStop(1, '#02070a');
+        c.fillStyle = g;
+        c.fillRect(0, 0, W, H);
+        c.strokeStyle = 'rgba(90,200,230,0.045)';
+        c.lineWidth = 1;
+        const step = 36;
+        c.beginPath();
+        for (let x = 0.5; x < W; x += step) { c.moveTo(x, 0); c.lineTo(x, H); }
+        for (let y = 0.5; y < H; y += step) { c.moveTo(0, y); c.lineTo(W, y); }
+        c.stroke();
+        let seed = 77;
+        const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+        c.strokeStyle = 'rgba(110,210,235,0.09)';
+        // keep schematic clutter out of the ring area so it never shows through
+        const clear = (x, y, pad) => ((x - W / 2) / (Math.min(W * 0.27, H * 0.36) * 1.12 + pad)) ** 2 + ((y - H * 0.47) / (Math.min(W * 0.27, H * 0.36) * 1.12 + pad)) ** 2 > 1;
+        for (let i = 0; i < 26; i++) {
+          const x = rnd() * W, y = rnd() * H, s = 20 + rnd() * 110;
+          if (!clear(x, y, s)) continue;
+          c.beginPath();
+          const kind = (rnd() * 4) | 0;
+          if (kind === 0) c.rect(x, y, s, s * (0.3 + rnd() * 0.7));
+          else if (kind === 1) { c.arc(x, y, s * 0.5, 0, TAU); c.moveTo(x - s * 0.7, y); c.lineTo(x + s * 0.7, y); }
+          else if (kind === 2) { c.moveTo(x, y); c.lineTo(x + s, y); c.lineTo(x + s, y + s * 0.4); c.lineTo(x + s * 1.6, y + s * 0.4); }
+          else { for (let j = 0; j < 5; j++) { c.moveTo(x, y + j * 7); c.lineTo(x + s * (0.4 + rnd() * 0.6), y + j * 7); } }
+          c.stroke();
+        }
+        const labels = ['ILUBOT // CORE SYSTEMS', 'NEURAL LINK 07-A', 'SIGNAL INTEGRITY', 'GRID REF 44.18',
+                        'DIAGNOSTIC MODE', 'PWR CELL B', 'SECTOR 12', 'SYNC 1.024 kHz', 'BUFFER 0x3F2A'];
+        c.font = '600 10px "SF Mono", Menlo, Consolas, monospace';
+        c.fillStyle = 'rgba(140,220,240,0.20)';
+        for (const l of labels) {
+          for (let tries = 0; tries < 30; tries++) {
+            const x = rnd() * (W - 160) + 10, y = rnd() * (H - 30) + 20;
+            if (clear(x, y, 0) && clear(x + 150, y, 0)) { c.fillText(l, x, y); break; }
+          }
+        }
+        bgLayer = off; bgKey = key;
+        return bgLayer;
+      }
+
+      // Thick annular segment between two radii.
+      function band(cx, cy, r0, r1, a0, a1) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, r1, a0, a1);
+        ctx.arc(cx, cy, r0, a1, a0, true);
+        ctx.closePath();
+      }
+
+      // Stroke twice — wide & faint, then thin & bright — for a cheap bloom.
+      function glowArc(cx, cy, r, a0, a1, col, alpha, lw) {
+        ctx.strokeStyle = rgba(col, alpha * 0.25);
+        ctx.lineWidth = lw * 3.5;
+        ctx.beginPath(); ctx.arc(cx, cy, r, a0, a1); ctx.stroke();
+        ctx.strokeStyle = rgba(col, alpha);
+        ctx.lineWidth = lw;
+        ctx.beginPath(); ctx.arc(cx, cy, r, a0, a1); ctx.stroke();
+      }
+
+      function frame(now) {
+        if (!running) return;
+        raf = requestAnimationFrame(frame);
+        const dt = Math.min(0.05, (now - (lastT || now)) / 1000);
+        lastT = now;
+        t += dt;
+        resize();
+
+        // ── Rhythm ──
+        const st = (state.aiState || 'LISTENING').toUpperCase();
+        const speaking = st === 'SPEAKING';
+        const raw = speaking ? Math.max(state.speakingLevel || 0, state.audioLevel || 0) : (state.audioLevel || 0) * 0.35;
+        lvl += (raw - lvl) * Math.min(1, dt * (raw > lvl ? 18 : 6));
+        if (raw - prevRaw > 0.07 && raw > 0.12 && beat < 0.35) { beat = 1; rings.push({ r: 0, a: 0.7 }); }
+        prevRaw = raw;
+        beat *= Math.exp(-dt * 5);
+        const key = STATE_ACCENT[st] ? st : (st.includes('THINK') || st.includes('PROCESS') ? 'THINKING' : 'LISTENING');
+        energy += (STATE_ENERGY[key] + lvl * 0.6 - energy) * Math.min(1, dt * 3);
+        accent = mix(accent, STATE_ACCENT[key], Math.min(1, dt * 4));
+        const C = key === 'THINKING' ? mix(accent, [80, 220, 255], 0.55) : accent;   // rings stay teal-ish
+        const dim = key === 'SLEEPING' ? 0.5 : 1;
+        spin += dt * (0.15 + energy * 0.5 + (key === 'THINKING' ? 0.9 : 0));
+        for (let i = 0; i < NT; i++) {
+          const wave = 0.5 + 0.5 * Math.sin(i * 0.45 + t * 7) * Math.sin(i * 0.13 - t * 2.3);
+          const target = 0.15 + 0.1 * Math.sin(i * 0.3 + t * 1.2) * energy + lvl * (0.35 + 0.65 * wave) + (speaking ? Math.random() * lvl * 0.3 : 0);
+          ticks[i] += (target - ticks[i]) * Math.min(1, dt * 14);
+        }
+
+        // ── Layout ──
+        const small = W < 520 || H < 360;
+        const cx = W / 2, cy = H * (small ? 0.5 : 0.47);
+        const R = (small ? Math.min(W, H) * 0.42 : Math.min(W * 0.27, H * 0.36)) * (1 + beat * 0.012);
+
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+        ctx.drawImage(getBg(), 0, 0, W, H);
+
+        // ambient glow behind the rings
+        ctx.globalCompositeOperation = 'lighter';
+        const amb = ctx.createRadialGradient(cx, cy, R * 0.2, cx, cy, R * 1.25);
+        amb.addColorStop(0, rgba(C, 0.10 + lvl * 0.10));
+        amb.addColorStop(0.7, rgba(C, 0.05 * dim));
+        amb.addColorStop(1, rgba(C, 0));
+        ctx.fillStyle = amb;
+        ctx.beginPath(); ctx.arc(cx, cy, R * 1.25, 0, TAU); ctx.fill();
+
+        // 1. Outer bracket ring: broken arcs with tabs, slow counter-rotation.
+        const oRot = -spin * 0.18;
+        const brackets = [[0.05, 0.62], [0.72, 1.35], [1.5, 2.6], [2.75, 3.3], [3.42, 4.6], [4.75, 5.95]];
+        for (const [a0, a1] of brackets) glowArc(cx, cy, R * 0.99, a0 + oRot, a1 + oRot, C, 0.75 * dim, 2.5);
+        for (let i = 0; i < 6; i++) {
+          const a = brackets[i][0] + oRot;
+          ctx.strokeStyle = rgba(C, 0.8 * dim); ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(a) * R * 0.99, cy + Math.sin(a) * R * 0.99);
+          ctx.lineTo(cx + Math.cos(a) * R * 1.04, cy + Math.sin(a) * R * 1.04);
+          ctx.stroke();
+        }
+        // second, offset bracket on the right like a clamp
+        glowArc(cx, cy, R * 1.04, -0.55 - oRot * 0.5, 0.35 - oRot * 0.5, C, 0.55 * dim, 4);
+
+        // 2. Thin dashed ring.
+        ctx.setLineDash([R * 0.05, R * 0.025]);
+        ctx.lineDashOffset = -spin * R * 0.2;
+        ctx.strokeStyle = rgba(C, 0.45 * dim);
+        ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.arc(cx, cy, R * 0.92, 0, TAU); ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 3. Tick ring — radial equaliser driven by the voice.
+        const tRot = spin * 0.12;
+        for (let i = 0; i < NT; i++) {
+          const a = tRot + (i / NT) * TAU;
+          const major = i % 10 === 0;
+          const r0 = R * 0.80, r1 = r0 + R * (major ? 0.07 : 0.035) + R * 0.07 * ticks[i];
+          ctx.strokeStyle = rgba(C, (major ? 0.9 : 0.55 + ticks[i] * 0.4) * dim);
+          ctx.lineWidth = major ? 2.2 : 1.3;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0);
+          ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
+          ctx.stroke();
+        }
+
+        // 4. Segmented band (top, ~260°), fills and brightens with the voice.
+        const sway = Math.sin(t * 0.35) * 0.12 + spin * 0.05;
+        const a0 = Math.PI * 0.80 + sway, span = Math.PI * (1.45 + lvl * 0.12);
+        const n = 44, cell = span / n, gap = cell * 0.12;
+        const fill = 0.45 + 0.5 * Math.min(1, energy * 0.6 + lvl * 0.7);
+        const sweep = (t * (key === 'THINKING' ? 30 : 12)) % (n + 8) - 4;
+        for (let i = 0; i < n; i++) {
+          const s0 = a0 + i * cell, s1 = s0 + cell - gap;
+          const lit = i / n < fill;
+          const hl = Math.max(0, 1 - Math.abs(i - sweep) / 3.5);
+          band(cx, cy, R * 0.62, R * 0.76, s0, s1);
+          const gr = ctx.createRadialGradient(cx, cy, R * 0.62, cx, cy, R * 0.76);
+          const base = (lit ? 0.42 : 0.16) + hl * 0.35 + (lit ? lvl * 0.25 : 0);
+          gr.addColorStop(0, rgba(C, base * 0.7 * dim));
+          gr.addColorStop(1, rgba(mix(C, [255, 255, 255], 0.25), Math.min(1, base * 1.1) * dim));
+          ctx.fillStyle = gr;
+          ctx.fill();
+        }
+        glowArc(cx, cy, R * 0.765, a0, a0 + span, C, 0.8 * dim, 1.4);
+        glowArc(cx, cy, R * 0.615, a0, a0 + span, C, 0.6 * dim, 1.2);
+        // amber indicator dots riding the band
+        for (let d = 0; d < 4; d++) {
+          const a = a0 + span * (0.52 + d * 0.06);
+          const on = (Math.sin(t * 4 + d * 1.3) > -0.3) || speaking;
+          ctx.fillStyle = rgba(AMBER, (on ? 0.95 : 0.3) * dim);
+          ctx.beginPath(); ctx.arc(cx + Math.cos(a) * R * 0.595, cy + Math.sin(a) * R * 0.595, R * 0.012, 0, TAU); ctx.fill();
+        }
+
+        // 5. Amber arc on the left — stretches with the voice.
+        const amA = Math.PI * (0.88 + Math.sin(t * 0.5) * 0.04) - spin * 0.08;
+        const amLen = 0.55 + lvl * 0.9 + (key === 'THINKING' ? 0.25 + 0.2 * Math.sin(t * 5) : 0);
+        glowArc(cx, cy, R * 0.585, amA, amA + amLen, AMBER, 0.95 * dim, 3);
+        for (const a of [amA, amA + amLen]) {
+          ctx.strokeStyle = rgba(AMBER, 0.9 * dim); ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(a) * R * 0.565, cy + Math.sin(a) * R * 0.565);
+          ctx.lineTo(cx + Math.cos(a) * R * 0.61, cy + Math.sin(a) * R * 0.61);
+          ctx.stroke();
+        }
+
+        // 6. Inner double ring.
+        glowArc(cx, cy, R * 0.50 * (1 + beat * 0.02), 0, TAU, mix(C, [255, 255, 255], 0.3), 0.95 * dim, 3);
+        glowArc(cx, cy, R * 0.465, 0, TAU, C, 0.55 * dim, 1.2);
+
+        // 7. Inner machinery: toothed ring, crosshair, faint circles.
+        const gRot = -spin * 0.35;
+        ctx.strokeStyle = rgba(C, 0.22 * dim);
+        ctx.lineWidth = 1;
+        for (let i = 0; i < 48; i++) {
+          const a = gRot + (i / 48) * TAU;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(a) * R * 0.40, cy + Math.sin(a) * R * 0.40);
+          ctx.lineTo(cx + Math.cos(a) * R * 0.43, cy + Math.sin(a) * R * 0.43);
+          ctx.stroke();
+        }
+        for (const rr of [0.40, 0.30, 0.22]) { ctx.beginPath(); ctx.arc(cx, cy, R * rr, 0, TAU); ctx.stroke(); }
+        ctx.beginPath();
+        ctx.moveTo(cx - R * 0.44, cy); ctx.lineTo(cx + R * 0.44, cy);
+        ctx.moveTo(cx, cy - R * 0.44); ctx.lineTo(cx, cy + R * 0.44);
+        ctx.stroke();
+
+        // 8. Circular voice oscilloscope around the name.
+        const vr = R * 0.36;
+        ctx.strokeStyle = rgba(mix(C, [255, 255, 255], 0.3), (0.25 + lvl * 0.7) * dim);
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        for (let i = 0; i <= 160; i++) {
+          const a = (i / 160) * TAU;
+          const amp = R * 0.05 * lvl * (Math.sin(a * 9 + t * 11) * 0.6 + Math.sin(a * 23 - t * 17) * 0.4) + R * 0.004 * Math.sin(a * 5 + t * 2);
+          const x = cx + Math.cos(a) * (vr + amp), y = cy + Math.sin(a) * (vr + amp);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+
+        // 9. Beat shockwaves.
+        rings = rings.filter(r => r.a > 0.02);
+        for (const r of rings) {
+          r.r += dt * R * 0.9; r.a *= Math.exp(-dt * 2.5);
+          ctx.strokeStyle = rgba(C, r.a); ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(cx, cy, R * 0.5 + r.r, 0, TAU); ctx.stroke();
+        }
+
+        // 10. Name plate.
+        ctx.globalCompositeOperation = 'source-over';
+        const fs = Math.max(16, R * 0.15);
+        ctx.font = `700 ${fs}px "Avenir Next", "Segoe UI", Inter, system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const label = 'I.L.U.B.O.T.';
+        if ('letterSpacing' in ctx) ctx.letterSpacing = `${fs * 0.08}px`;
+        const tg = ctx.createLinearGradient(0, cy - fs / 2, 0, cy + fs / 2);
+        tg.addColorStop(0, '#ffffff');
+        tg.addColorStop(0.55, '#d8ecf2');
+        tg.addColorStop(1, '#8fb2bf');
+        ctx.shadowColor = rgba(C, 0.9);
+        ctx.shadowBlur = 10 + lvl * 26 + beat * 10;
+        ctx.fillStyle = tg;
+        ctx.globalAlpha = 0.75 + 0.25 * dim;
+        ctx.fillText(label, cx, cy);
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
+        if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+
+        // 11. Side readouts.
+        if (!small && cx - R * 1.1 > 210) {
+          const up = Math.floor((Date.now() - startedAt) / 1000);
+          const hh = String(Math.floor(up / 3600)).padStart(2, '0'), mm = String(Math.floor(up / 60) % 60).padStart(2, '0'), ss = String(up % 60).padStart(2, '0');
+          const rows = [
+            ['SYS.CORE', key === 'SLEEPING' ? 'STANDBY' : 'ONLINE'],
+            ['STATE', key],
+            ['VOICE LVL', String(Math.round(lvl * 100)).padStart(3, '0')],
+            ['NEURAL LOAD', `${Math.round(Math.min(0.99, energy) * 100)}%`],
+            ['UPTIME', `${hh}:${mm}:${ss}`],
+          ];
+          ctx.font = '600 11px "SF Mono", Menlo, Consolas, monospace';
+          ctx.textBaseline = 'middle';
+          const lx = Math.max(24, cx - R * 1.1 - 200), ly = cy - R * 0.35;
+          rows.forEach(([k, v], i) => {
+            const y = ly + i * 20;
+            ctx.textAlign = 'left';
+            ctx.fillStyle = rgba(C, 0.55);
+            ctx.fillText(k, lx, y);
+            ctx.textAlign = 'right';
+            ctx.fillStyle = i === 1 ? rgba(key === 'THINKING' ? AMBER : C, 0.95) : 'rgba(225,245,250,0.85)';
+            ctx.fillText(v, lx + 170, y);
+          });
+          ctx.strokeStyle = rgba(C, 0.35);
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(lx, ly - 16); ctx.lineTo(lx + 170, ly - 16); ctx.stroke();
+          // right-hand mini spectrum
+          const rx = cx + R * 1.1 + 30, ry = cy + R * 0.25, bw = 7;
+          for (let b = 0; b < 16; b++) {
+            const v = ticks[(b * 7) % NT];
+            const h = 6 + v * 60;
+            ctx.fillStyle = rgba(b % 5 === 0 ? AMBER : C, 0.75);
+            ctx.fillRect(rx + b * (bw + 3), ry - h, bw, h);
+          }
+          ctx.fillStyle = rgba(C, 0.5);
+          ctx.textAlign = 'left';
+          ctx.fillText('AUDIO SPECTRUM', rx, ry + 14);
+        }
+
+        updateVoiceBars();
+      }
+
+      return {
+        start() {
+          if (running) return;
+          running = true; lastT = 0;
+          raf = requestAnimationFrame(frame);
+        },
+        stop() {
+          running = false;
+          cancelAnimationFrame(raf);
+        },
+      };
+    })();
+
+    // ── Visual style: Neural Brain (default), Ilubot HUD, or 3D avatar ───────────
+    let stageStyle = 'brain';
+    let threeStarted = false;
+
+    const STAGE_STYLES = ['brain', 'ilubot', 'avatar'];
+    const STAGE_RENDERERS = { brain: BrainStage, ilubot: IlubotStage };
+
+    function applyStageStyle(style) {
+      stageStyle = STAGE_STYLES.includes(style) ? style : 'brain';
+      for (const s of STAGE_STYLES) document.body.classList.toggle(`stage-${s}`, s === stageStyle);
+      const sel = document.getElementById('stage-style-select');
+      if (sel) sel.value = stageStyle;
+      // Only the visible stage animates; the others sit idle.
+      for (const [name, r] of Object.entries(STAGE_RENDERERS)) if (name !== stageStyle) r.stop();
+      const overlay = document.getElementById('loading-overlay');
+      if (stageStyle === 'avatar') {
+        if (!threeStarted) {
+          threeStarted = true;
+          if (overlay) { overlay.style.display = ''; overlay.style.opacity = '1'; }
+          initThree();          // loads ZainAI.glb only when it is actually wanted
+        } else {
+          onWindowResize();
+        }
+      } else {
+        if (overlay) {
+          overlay.style.opacity = '0';
+          setTimeout(() => { if (stageStyle !== 'avatar') overlay.style.display = 'none'; }, 400);
+        }
+        STAGE_RENDERERS[stageStyle].start();
+      }
+      try { localStorage.setItem('zainai.stageStyle', stageStyle); } catch (e) {}
+    }
+
+    function initStage() {
+      let initial = 'brain';
+      try { initial = localStorage.getItem('zainai.stageStyle') || 'brain'; } catch (e) {}
+      applyStageStyle(initial);
+      // The saved config is the source of truth (survives restarts and cleared storage).
+      fetch('/api/stage_style').then(r => r.ok ? r.json() : null).then(d => {
+        if (d && d.style && d.style !== stageStyle) applyStageStyle(d.style);
+      }).catch(() => {});
+      const sel = document.getElementById('stage-style-select');
+      if (sel) {
+        sel.addEventListener('change', () => {
+          applyStageStyle(sel.value);
+          fetch('/api/stage_style', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ style: stageStyle }),
+          }).catch(() => {});
+        });
+      }
     }
 
     // ── Call State Machine & Web Audio Ringing ────────────────────────────────────
@@ -1926,7 +3146,7 @@
       btnStart.style.display = 'none';
       btnCancel.style.display = 'flex';
       statusText.innerText = 'Ringing...';
-      desc.innerText = 'Calling ZainAI... Establishing neural audio-visual connection.';
+      desc.innerText = 'Calling Ilubot... Establishing neural audio-visual connection.';
 
       // Start phone ringing tone
       startRingingSound();
@@ -2039,7 +3259,7 @@
       document.getElementById('call-timer').innerText = `${hrs}:${mins}:${secs}`;
     }, 1000);
 
-    // ── Spotlight Swapping (ZainAI vs Host) ───────────────────────────────────────
+    // ── Spotlight Swapping (Ilubot vs Host) ───────────────────────────────────────
     function toggleSpotlight() {
       const tileAi = document.getElementById('tile-ai');
       const tileHost = document.getElementById('tile-host');
@@ -2437,7 +3657,7 @@
 
       // Clean text: strip title headers, markdown asterisks, emojis, bullets
       let clean = rawText
-        .replace(/^ZainAI\s*:?\s*/i, '')
+        .replace(/^Ilubot\s*:?\s*/i, '')
         .replace(/[*#_`~>\[\]\(\)]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
@@ -2592,7 +3812,7 @@
       if (role !== 'system') {
         const sender = document.createElement('div');
         sender.className = 'msg-sender';
-        sender.innerText = role === 'user' ? 'You' : 'ZainAI';
+        sender.innerText = role === 'user' ? 'You' : 'Ilubot';
         msg.appendChild(sender);
       }
 
@@ -2685,6 +3905,38 @@
     });
 
     // Call screen action listeners
+    // ── Teaching language picker (call screen) ─────────────────────────────
+    // Saved to the backend as soon as it changes; the AI session reads it
+    // when the call connects, so the whole conversation uses this language.
+    (function initTeachingLanguage() {
+      const sel = document.getElementById('call-lang-select');
+      if (!sel) return;
+      const fill = (options, current) => {
+        sel.innerHTML = '';
+        const list = options.includes(current) ? options : [current, ...options];
+        list.forEach(l => {
+          const o = document.createElement('option');
+          o.value = l; o.textContent = l;
+          sel.appendChild(o);
+        });
+        sel.value = current;
+      };
+      fetch('/api/teaching_language')
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d && d.options) fill(d.options, d.language || 'English'); })
+        .catch(() => {});
+      sel.addEventListener('change', () => {
+        const language = sel.value;
+        fetch('/api/teaching_language', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ language }),
+        }).then(r => r.ok ? r.json() : null).then(d => {
+          if (d && d.language) addChatMessage('system', `Teaching language set to ${d.language}.`);
+        }).catch(() => {});
+      });
+    })();
+
     document.getElementById('btn-start-call').addEventListener('click', initiateCall);
     document.getElementById('btn-cancel-call').addEventListener('click', cancelCall);
 
@@ -2723,7 +3975,7 @@
 
     // Initialise Everything
     window.addEventListener('DOMContentLoaded', () => {
-      initThree();
+      initStage();
       initBridge();
       updateCameraUI();
     });
