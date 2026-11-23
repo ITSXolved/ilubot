@@ -194,8 +194,19 @@ class ConferenceServer:
         if WEB_DIR.exists():
             self.app.mount("/web", StaticFiles(directory=str(WEB_DIR)), name="web")
 
+        @self.app.on_event("startup")
+        async def on_startup():
+            try:
+                self._loop = asyncio.get_running_loop()
+            except Exception:
+                pass
+
         @self.app.websocket("/ws")
         async def websocket_endpoint(ws: WebSocket):
+            try:
+                self._loop = asyncio.get_running_loop()
+            except Exception:
+                pass
             await ws.accept()
             raw_session_id = ws.query_params.get("session_id") or ws.headers.get("x-session-id")
             session_id = (raw_session_id.strip() if raw_session_id else "") or f"sess_{uuid.uuid4().hex[:12]}"
@@ -292,6 +303,12 @@ class ConferenceServer:
     def send_to_session(self, session_id: str, message: dict[str, Any]) -> None:
         """Thread-safe targeted send to WebSockets belonging to a specific session."""
         if not self._loop or not self._loop.is_running():
+            try:
+                self._loop = asyncio.get_running_loop()
+            except Exception:
+                pass
+        if not self._loop or not self._loop.is_running():
+            logger.warning("[ConferenceServer] Event loop not running; cannot send_to_session")
             return
         sockets = list(self.session_websockets.get(session_id, set()))
         if not sockets and (session_id == "default" or len(self.session_websockets) <= 1):
@@ -318,8 +335,8 @@ class ConferenceServer:
 
         try:
             asyncio.run_coroutine_threadsafe(_send(), self._loop)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"[ConferenceServer] send_to_session dispatch error: {e}")
 
     def send_state(self, session_id: str, state: str) -> None:
         self.send_to_session(session_id, {"type": "state", "state": state})
@@ -349,7 +366,12 @@ class ConferenceServer:
 
     def broadcast(self, message: dict[str, Any]) -> None:
         """Thread-safe broadcast to all connected WebSocket clients across all sessions."""
-        if not self.active_websockets or not self._loop or not self._loop.is_running():
+        if not self._loop or not self._loop.is_running():
+            try:
+                self._loop = asyncio.get_running_loop()
+            except Exception:
+                pass
+        if not self._loop or not self._loop.is_running():
             return
 
         text = json.dumps(message)

@@ -3151,6 +3151,16 @@
           window.speechSynthesis.speak(prime);
         } catch (_) {}
       }
+
+      // Prompt and acquire microphone permission during user click gesture
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ audio: true }).then((micStream) => {
+          window._localMicStream = micStream;
+          startVoiceRecognition();
+        }).catch((err) => {
+          console.warn('Microphone permission request:', err);
+        });
+      }
       const overlay = document.getElementById('call-screen-overlay');
       const btnStart = document.getElementById('btn-start-call');
       const btnCancel = document.getElementById('btn-cancel-call');
@@ -3851,6 +3861,9 @@
       speechRec.onerror = (e) => {
         if (e.error !== 'no-speech') {
           console.warn('Speech recognition warning:', e.error);
+        }
+        if (e.error === 'not-allowed') {
+          addChatMessage('system', '⚠️ Microphone blocked. Please allow mic access in your browser address bar, or use the Chat drawer (keyboard "C") to chat.');
         }
       };
 
