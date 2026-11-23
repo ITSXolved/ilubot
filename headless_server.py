@@ -105,9 +105,9 @@ class HeadlessSession:
         self.session_manager: RedisSessionManager = get_session_manager()
         self.api_key = get_api_key()
         self.client: Any = None
-        # Candidate model ladder: gemini-3.8-flash (recommended), gemini-3-flash-preview, gemini-3.5-flash-lite, gemini-flash-latest
-        preferred_model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
-        candidates = [preferred_model, "gemini-3.8-flash", "gemini-3-flash-preview", "gemini-3.5-flash-lite", "gemini-flash-latest"]
+        # Candidate model ladder: gemini-3-flash-preview (fastest/available), gemini-3.5-flash-lite, gemini-3.8-flash, gemini-flash-latest
+        preferred_model = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
+        candidates = [preferred_model, "gemini-3-flash-preview", "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-flash-latest"]
         self.model_candidates: list[str] = list(dict.fromkeys(candidates)) # deduplicated keeping order
         self.model_name = self.model_candidates[0]
         self.user_chats: dict[str, Any] = {}
