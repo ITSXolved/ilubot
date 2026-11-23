@@ -155,20 +155,18 @@ PROVIDER_PREFIX = "prov:"
 # cooldown after one attempt instead of being paid for on every call.
 _LADDERS = {
     FAST: (LIVE,
-           "gemini-2.5-flash-lite", "gemini-3.5-flash-lite",
+           "gemini-3.8-flash", "gemini-3-flash-preview", "gemini-3.5-flash-lite",
            "gemini-3.1-flash-lite", "gemini-flash-lite-latest",
-           "gemini-2.5-flash", "gemini-3.5-flash",
-           "gemini-3.6-flash", "gemini-3-flash-preview"),
+           "gemini-3.5-flash", "gemini-3.6-flash", "gemini-2.5-flash"),
     SMART: (LIVE,
-            "gemini-2.5-flash", "gemini-3.5-flash",
-            "gemini-2.5-flash-lite", "gemini-3.5-flash-lite",
+            "gemini-3.8-flash", "gemini-3-flash-preview", "gemini-3.5-flash-lite",
             "gemini-3.1-flash-lite",
-            "gemini-3.6-flash", "gemini-3-flash-preview", "gemini-flash-latest"),
+            "gemini-3.5-flash", "gemini-3.6-flash", "gemini-flash-latest", "gemini-2.5-flash"),
     # Grounded search needs response.candidates[...].grounding_metadata, which a
     # Live turn does not produce. REST only, and it says so rather than silently
     # returning an answer with no sources behind it.
-    SEARCH: ("gemini-2.5-flash", "gemini-3.5-flash", "gemini-2.5-flash-lite",
-             "gemini-flash-latest"),
+    SEARCH: ("gemini-3.8-flash", "gemini-3-flash-preview", "gemini-3.5-flash-lite",
+             "gemini-3.5-flash", "gemini-flash-latest"),
 }
 
 # The conversation's own model, and ONE careful fallback behind it.

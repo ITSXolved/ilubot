@@ -105,7 +105,11 @@ class HeadlessSession:
         self.session_manager: RedisSessionManager = get_session_manager()
         self.api_key = get_api_key()
         self.client: Any = None
-        self.model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+        # Candidate model ladder: gemini-3.8-flash (recommended), gemini-3-flash-preview, gemini-3.5-flash-lite, gemini-flash-latest
+        preferred_model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+        candidates = [preferred_model, "gemini-3.8-flash", "gemini-3-flash-preview", "gemini-3.5-flash-lite", "gemini-flash-latest"]
+        self.model_candidates: list[str] = list(dict.fromkeys(candidates)) # deduplicated keeping order
+        self.model_name = self.model_candidates[0]
         self.user_chats: dict[str, Any] = {}
         self._viseme_cancel_events: dict[str, threading.Event] = {}
 
@@ -126,7 +130,7 @@ class HeadlessSession:
             logger.error(f"Failed to initialize Gemini SDK client: {e}")
 
     def _get_or_create_chat(self, session_id: str, force_new: bool = False) -> Any:
-        """Create or retrieve a per-session Gemini chat, restoring prior turns from Redis if available."""
+        """Create or retrieve a per-session Gemini chat, trying candidate models with automatic fallback."""
         if not self.client:
             self._init_gemini_client()
         if not self.client:
@@ -141,18 +145,58 @@ class HeadlessSession:
         # Retrieve prior conversation turns stored in Redis (up to 30 min old)
         history = self.session_manager.get_gemini_history(session_id) if not force_new else []
 
+        for model_candidate in self.model_candidates:
+            try:
+                chat = self.client.chats.create(
+                    model=model_candidate,
+                    config={"system_instruction": system_instruction},
+                    history=history if history else None,
+                )
+                self.model_name = model_candidate
+                self.user_chats[session_id] = chat
+                logger.info(f"Initialized Gemini chat for session {session_id} on model '{model_candidate}' (restored {len(history)} turns, lang: {lang})")
+                return chat
+            except Exception as e:
+                logger.warning(f"Failed to create chat for session {session_id} on '{model_candidate}': {e}")
+                continue
+
+        logger.error(f"Failed to create chat for session {session_id} across all candidate models.")
+        return None
+
+    def _send_chat_message(self, session_id: str, prompt: str) -> str:
+        """Send message to chat with automatic fallback to next available models upon 404/503 errors."""
+        chat = self._get_or_create_chat(session_id)
+        if not chat:
+            return ""
+
         try:
-            chat = self.client.chats.create(
-                model=self.model_name,
-                config={"system_instruction": system_instruction},
-                history=history if history else None,
-            )
-            self.user_chats[session_id] = chat
-            logger.info(f"Initialized Gemini chat for session {session_id} (restored {len(history)} turns, lang: {lang})")
-            return chat
+            r = chat.send_message(prompt)
+            return (r.text or "").strip()
         except Exception as e:
-            logger.error(f"Failed to create chat for session {session_id}: {e}")
-            return None
+            logger.warning(f"[{session_id}] send_message failed on {self.model_name}: {e}. Retrying on fallback models...")
+
+        lang = _teaching_language(session_id)
+        system_instruction = build_system_instruction(lang)
+        history = self.session_manager.get_gemini_history(session_id)
+
+        for candidate in self.model_candidates:
+            if candidate == self.model_name:
+                continue
+            try:
+                new_chat = self.client.chats.create(
+                    model=candidate,
+                    config={"system_instruction": system_instruction},
+                    history=history if history else None,
+                )
+                r = new_chat.send_message(prompt)
+                self.model_name = candidate
+                self.user_chats[session_id] = new_chat
+                logger.info(f"[{session_id}] Switched to model '{candidate}' successfully.")
+                return (r.text or "").strip()
+            except Exception as e2:
+                logger.warning(f"[{session_id}] Fallback model {candidate} failed: {e2}")
+                continue
+        return ""
 
     def _wire_callbacks(self) -> None:
         self.server.on_start_call = self._on_start_call
@@ -169,22 +213,17 @@ class HeadlessSession:
 
         # Check if returning user within 30-min window
         prior_history = self.session_manager.get_history(session_id)
-        chat = self._get_or_create_chat(session_id, force_new=False)
         lang = _teaching_language(session_id)
 
         def _delayed_greeting():
             time.sleep(0.5)
             greeting = ""
-            if chat:
-                try:
-                    if prior_history:
-                        prompt = f"[WELCOME_BACK] Greet the returning student warmly in 1 short sentence in {lang}, let them know we can continue their previous study topic or explore new material."
-                    else:
-                        prompt = f"[START] Greet the student warmly in 1-2 short sentences in {lang}, ask their name, and invite them to show their study material on the screen or camera."
-                    r = chat.send_message(prompt)
-                    greeting = (r.text or "").strip()
-                except Exception as e:
-                    logger.error(f"[{session_id}] Greeting generation failed: {e}")
+            if prior_history:
+                prompt = f"[WELCOME_BACK] Greet the returning student warmly in 1 short sentence in {lang}, let them know we can continue their previous study topic or explore new material."
+            else:
+                prompt = f"[START] Greet the student warmly in 1-2 short sentences in {lang}, ask their name, and invite them to show their study material on the screen or camera."
+
+            greeting = self._send_chat_message(session_id, prompt)
 
             if not greeting:
                 if prior_history:
@@ -229,16 +268,12 @@ class HeadlessSession:
         # Record user message in Redis (refreshes 30 min TTL)
         self.session_manager.add_message(session_id, "user", text)
 
-        chat = self._get_or_create_chat(session_id)
-        if not self.client or not chat:
-            self.server.send_content(session_id, "System", "GEMINI_API_KEY not configured. Please supply an API key.")
-            return
-
         def _generate():
             try:
                 self.server.send_state(session_id, "THINKING")
-                response = chat.send_message(text)
-                reply = response.text or "I heard you loud and clear."
+                reply = self._send_chat_message(session_id, text)
+                if not reply:
+                    reply = "I heard you loud and clear. How would you like to proceed?"
 
                 # Store assistant response in Redis (refreshes 30 min TTL)
                 self.session_manager.add_message(session_id, "model", reply, name="Ilubot")
@@ -283,14 +318,23 @@ class HeadlessSession:
                     "Output ONLY the transcribed words with no labels, no notes, and no quotes. "
                     "If the audio is only background noise or silent, output empty."
                 )
-                r = self.client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=[
-                        types.Part.from_bytes(data=audio_bytes, mime_type=clean_mime),
-                        prompt,
-                    ],
-                )
-                transcribed = (r.text or "").strip()
+                transcribed = ""
+                for candidate in self.model_candidates:
+                    try:
+                        r = self.client.models.generate_content(
+                            model=candidate,
+                            contents=[
+                                types.Part.from_bytes(data=audio_bytes, mime_type=clean_mime),
+                                prompt,
+                            ],
+                        )
+                        transcribed = (r.text or "").strip()
+                        if transcribed:
+                            break
+                    except Exception as err:
+                        logger.warning(f"[{session_id}] Transcription on {candidate} failed: {err}")
+                        continue
+
                 if transcribed:
                     logger.info(f"[{session_id}] Audio transcribed successfully: '{transcribed}'")
                     self._on_text_command(session_id, transcribed)
