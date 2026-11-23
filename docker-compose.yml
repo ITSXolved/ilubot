@@ -24,6 +24,8 @@ services:
       - "8080:8080"
     volumes:
       - ./web:/app/web
+      - ./core:/app/core
+      - ./headless_server.py:/app/headless_server.py
     environment:
       - PORT=8080
       - HOST=0.0.0.0

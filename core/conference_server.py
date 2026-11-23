@@ -74,11 +74,18 @@ class ConferenceServer:
         import inspect
         try:
             sig = inspect.signature(cb)
-            param_names = list(sig.parameters.keys())
-            if "session_id" in param_names or len(param_names) == len(args) + 1:
+            params = list(sig.parameters.values())
+            param_names = [p.name for p in params]
+            has_var_positional = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params)
+            if "session_id" in param_names or len(param_names) == len(args) + 1 or has_var_positional:
                 cb(session_id, *args)
             else:
                 cb(*args)
+        except TypeError:
+            try:
+                cb(*args)
+            except Exception as e:
+                logger.error(f"[ConferenceServer] Callback dispatch fallback error: {e}")
         except Exception as e:
             try:
                 cb(*args)
@@ -287,6 +294,9 @@ class ConferenceServer:
         if not self._loop or not self._loop.is_running():
             return
         sockets = list(self.session_websockets.get(session_id, set()))
+        if not sockets and (session_id == "default" or len(self.session_websockets) <= 1):
+            # Fallback to all active sockets if session not specifically registered
+            sockets = list(self.active_websockets)
         if not sockets:
             return
 

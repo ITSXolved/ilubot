@@ -3143,7 +3143,13 @@
       callState = 'calling';
       getAudioContext();
       if ('speechSynthesis' in window) {
-        window.speechSynthesis.resume();
+        try {
+          window.speechSynthesis.resume();
+          // Prime speech engine during user click gesture to grant permission in Chrome/Safari
+          const prime = new SpeechSynthesisUtterance(' ');
+          prime.volume = 0.01;
+          window.speechSynthesis.speak(prime);
+        } catch (_) {}
       }
       const overlay = document.getElementById('call-screen-overlay');
       const btnStart = document.getElementById('btn-start-call');
@@ -3699,10 +3705,11 @@
       return !!window.pyBridge || (navigator.userAgent && navigator.userAgent.includes('QtWebEngine'));
     }
 
+    window._activeUtterances = window._activeUtterances || [];
+
     function speakText(rawText) {
       if (isEmbeddedQt()) return; // Desktop app plays Gemini audio via Python PyAudio
       if (!('speechSynthesis' in window) || !rawText) return;
-      stopSpeaking();
 
       // Clean text: strip title headers, markdown asterisks, emojis, bullets
       let clean = rawText
@@ -3713,11 +3720,28 @@
 
       if (!clean) return;
 
+      // Resume synthesizer if suspended by browser
+      try {
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+      } catch (_) {}
+
+      stopSpeaking();
+
       const utter = new SpeechSynthesisUtterance(clean);
       if (!selectedVoice) initVoices();
       if (selectedVoice) utter.voice = selectedVoice;
-      utter.rate = 1.05;
+      utter.lang = 'en-US';
+      utter.rate = 1.0;
       utter.pitch = 1.0;
+
+      // Retain utterance reference to prevent Chrome garbage collection cutoff bug
+      window._activeUtterances.push(utter);
+      const cleanup = () => {
+        const idx = window._activeUtterances.indexOf(utter);
+        if (idx >= 0) window._activeUtterances.splice(idx, 1);
+      };
 
       utter.onstart = () => {
         onStateChanged('SPEAKING');
@@ -3737,25 +3761,36 @@
       };
 
       utter.onend = () => {
+        cleanup();
         stopSpeaking();
         onStateChanged('LISTENING');
       };
 
-      utter.onerror = () => {
+      utter.onerror = (e) => {
+        cleanup();
+        console.warn('SpeechSynthesis error:', e);
         stopSpeaking();
         onStateChanged('LISTENING');
       };
 
-      try {
-        window.speechSynthesis.speak(utter);
-      } catch (e) {
-        console.warn('Speech synthesis error:', e);
-      }
+      // Slight 35ms deferral prevents Chromium bug where cancel() silently cancels immediate speak()
+      setTimeout(() => {
+        try {
+          window.speechSynthesis.resume();
+          window.speechSynthesis.speak(utter);
+        } catch (e) {
+          console.warn('Speech synthesis error:', e);
+        }
+      }, 35);
     }
 
     function stopSpeaking() {
       if ('speechSynthesis' in window) {
-        try { window.speechSynthesis.cancel(); } catch (_) {}
+        try {
+          if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+            window.speechSynthesis.cancel();
+          }
+        } catch (_) {}
       }
       if (speechAnimInterval) {
         clearInterval(speechAnimInterval);

@@ -208,26 +208,11 @@ class HeadlessSession:
         self._cancel_visemes(session_id)
         self.server.send_state(session_id, "LISTENING")
 
-    def _on_mute_toggled(self, *args: Any) -> None:
-        # Handles both (session_id, muted) or (muted,)
-        if len(args) == 2:
-            session_id, muted = args[0], bool(args[1])
-        elif len(args) == 1:
-            session_id, muted = "default", bool(args[0])
-        else:
-            return
+    def _on_mute_toggled(self, session_id: str = "default", muted: bool = False, *args: Any) -> None:
         logger.info(f"[{session_id}] Mute toggled: {muted}")
         self.server.send_mute(session_id, muted)
 
-    def _on_text_command(self, *args: Any) -> None:
-        # Handles both (session_id, text) or (text,)
-        if len(args) == 2:
-            session_id, text = str(args[0]), str(args[1])
-        elif len(args) == 1:
-            session_id, text = "default", str(args[0])
-        else:
-            return
-
+    def _on_text_command(self, session_id: str = "default", text: str = "", *args: Any) -> None:
         text = text.strip()
         if not text:
             return
