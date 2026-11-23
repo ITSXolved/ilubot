@@ -60,6 +60,7 @@ class ConferenceServer:
         self.on_interrupt: Callable[..., None] | None = None
         self.on_mute_toggled: Callable[..., None] | None = None
         self.on_text_command: Callable[..., None] | None = None
+        self.on_audio_command: Callable[..., None] | None = None
         self.on_voice_changed: Callable[..., None] | None = None
         self.on_screen_capture: Callable[..., None] | None = None
         self.on_leave_call: Callable[..., None] | None = None
@@ -177,6 +178,102 @@ class ConferenceServer:
             except Exception as e:
                 return JSONResponse({"error": str(e)}, status_code=500)
 
+        @self.app.get("/api/tts")
+        async def tts_endpoint(text: str = "", lang: str = "en", session_id: str = ""):
+            """Server-side TTS audio streaming (MP3) supporting 16+ languages with auto-chunking."""
+            import asyncio
+            import re
+            import urllib.parse
+            import httpx
+            from fastapi.responses import Response
+
+            clean_text = text.strip()[:1000]
+            if not clean_text:
+                return Response(content=b"", media_type="audio/mpeg")
+
+            if not lang or lang.lower() == "english":
+                if session_id:
+                    sess_lang = self.session_manager.get_session_language(session_id)
+                    if sess_lang:
+                        lang = sess_lang
+
+            lang_map = {
+                "english": "en",
+                "arabic": "ar",
+                "hindi": "hi",
+                "malayalam": "ml",
+                "tamil": "ta",
+                "urdu": "ur",
+                "bengali": "bn",
+                "french": "fr",
+                "spanish": "es",
+                "german": "de",
+                "turkish": "tr",
+                "indonesian": "id",
+                "malay": "ms",
+                "chinese": "zh-CN",
+                "japanese": "ja",
+                "korean": "ko",
+            }
+            tl = lang_map.get(lang.lower().strip(), "en")
+
+            # Clean and split into <= 150 char chunks to avoid Google TTS 400 Bad Request
+            cleaned_phrase = re.sub(r'[*#_`~>\[\]\(\)]', ' ', clean_text)
+            cleaned_phrase = re.sub(r'\s+', ' ', cleaned_phrase).strip()
+            if not cleaned_phrase:
+                return Response(content=b"", media_type="audio/mpeg")
+
+            def _chunk_text(s: str, max_len: int = 150) -> list[str]:
+                if len(s) <= max_len:
+                    return [s]
+                words = s.split(' ')
+                chunks = []
+                cur = []
+                cur_len = 0
+                for w in words:
+                    if cur_len + len(w) + 1 > max_len and cur:
+                        chunks.append(' '.join(cur))
+                        cur = [w]
+                        cur_len = len(w)
+                    else:
+                        cur.append(w)
+                        cur_len += len(w) + 1
+                if cur:
+                    chunks.append(' '.join(cur))
+                return chunks[:8]
+
+            chunks = _chunk_text(cleaned_phrase)
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as http_client:
+                    tasks = [
+                        http_client.get(
+                            f"https://translate.google.com/translate_tts?ie=UTF-8&tl={tl}&client=tw-ob&q={urllib.parse.quote(c)}",
+                            headers=headers
+                        )
+                        for c in chunks
+                    ]
+                    resps = await asyncio.gather(*tasks, return_exceptions=True)
+                    audio_chunks = []
+                    for r in resps:
+                        if isinstance(r, httpx.Response) and r.status_code == 200 and len(r.content) > 50:
+                            audio_chunks.append(r.content)
+                    if audio_chunks:
+                        return Response(
+                            content=b"".join(audio_chunks),
+                            media_type="audio/mpeg",
+                            headers={
+                                "Cache-Control": "public, max-age=86400",
+                                "Accept-Ranges": "bytes",
+                            },
+                        )
+            except Exception as e:
+                logger.error(f"[ConferenceServer] TTS fetch error: {e}")
+            return Response(content=b"", status_code=502)
+
         @self.app.get("/avatar/{name}")
         async def get_avatar(name: str):
             glb_file = AVATAR_DIR / name
@@ -251,6 +348,11 @@ class ConferenceServer:
                             cmd = data.get("text", "").strip()
                             if cmd:
                                 self._dispatch_callback(self.on_text_command, session_id, cmd)
+                        elif action == "audio_command":
+                            audio_b64 = data.get("audio", "")
+                            mime = data.get("mime", "audio/webm")
+                            if audio_b64:
+                                self._dispatch_callback(self.on_audio_command, session_id, audio_b64, mime)
                         elif action == "voice_changed":
                             self._dispatch_callback(self.on_voice_changed, session_id, data.get("voice", ""))
                         elif action == "screen_capture":

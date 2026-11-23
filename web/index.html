@@ -3156,6 +3156,7 @@
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         navigator.mediaDevices.getUserMedia({ audio: true }).then((micStream) => {
           window._localMicStream = micStream;
+          initMediaRecorderVoice(micStream);
           startVoiceRecognition();
         }).catch((err) => {
           console.warn('Microphone permission request:', err);
@@ -3697,6 +3698,7 @@
     // ── Browser Text-to-Speech (Speaking Voice) ──────────────────────────────────
     let speechAnimInterval = null;
     let selectedVoice = null;
+    window._currentTTSAudio = null;
 
     function initVoices() {
       if (!('speechSynthesis' in window)) return;
@@ -3719,34 +3721,93 @@
 
     function speakText(rawText) {
       if (isEmbeddedQt()) return; // Desktop app plays Gemini audio via Python PyAudio
-      if (!('speechSynthesis' in window) || !rawText) return;
+      if (!rawText) return;
 
-      // Clean text: strip title headers, markdown asterisks, emojis, bullets
+      // Clean text: strip title headers, code snippets, markdown asterisks, emojis, bullets
       let clean = rawText
         .replace(/^Ilubot\s*:?\s*/i, '')
-        .replace(/[*#_`~>\[\]\(\)]/g, ' ')
+        .replace(/```[\s\S]*?```/g, ' [code snippet omitted] ')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/[*#_~>\[\]\(\)]/g, ' ')
+        .replace(/https?:\/\/\S+/g, ' link ')
+        .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
         .replace(/\s+/g, ' ')
         .trim();
 
       if (!clean) return;
 
-      // Resume synthesizer if suspended by browser
-      try {
-        if (window.speechSynthesis.paused) {
-          window.speechSynthesis.resume();
-        }
-      } catch (_) {}
-
       stopSpeaking();
+
+      // Determine active teaching language (e.g. Malayalam, Hindi, Arabic, English)
+      const langSel = document.getElementById('call-lang-select');
+      const lang = (langSel ? langSel.value : 'English').toLowerCase();
+
+      // Viseme & lip-sync animation
+      const startVisemePulse = () => {
+        onStateChanged('SPEAKING');
+        const vowels = ['AA', 'E', 'I', 'O', 'U'];
+        if (speechAnimInterval) clearInterval(speechAnimInterval);
+        speechAnimInterval = setInterval(() => {
+          if (state.aiState !== 'SPEAKING') {
+            clearInterval(speechAnimInterval);
+            return;
+          }
+          const lvl = 0.45 + Math.random() * 0.45;
+          const op = 0.4 + Math.random() * 0.5;
+          const wd = 0.25 + Math.random() * 0.45;
+          const tag = vowels[Math.floor(Math.random() * vowels.length)];
+          onVisemeFrame(lvl, op, wd, tag);
+        }, 70);
+      };
+
+      // Play server-side TTS MP3 stream (supports Malayalam, Hindi, Arabic, English, etc.)
+      try {
+        const ttsUrl = `/api/tts?text=${encodeURIComponent(clean.slice(0, 800))}&lang=${encodeURIComponent(lang)}&session_id=${encodeURIComponent(currentSessionId)}`;
+        const audio = new Audio(ttsUrl);
+        window._currentTTSAudio = audio;
+
+        audio.onplay = () => {
+          startVisemePulse();
+        };
+
+        audio.onended = () => {
+          window._currentTTSAudio = null;
+          stopSpeaking();
+          onStateChanged('LISTENING');
+        };
+
+        audio.onerror = (e) => {
+          console.warn('Backend TTS audio stream failed, falling back to Web Speech API:', e);
+          window._currentTTSAudio = null;
+          fallbackSpeechSynthesis(clean, lang);
+        };
+
+        const playPromise = audio.play();
+        if (playPromise !== undefined) {
+          playPromise.catch((err) => {
+            console.warn('Audio play error, falling back to Web Speech:', err);
+            window._currentTTSAudio = null;
+            fallbackSpeechSynthesis(clean, lang);
+          });
+        }
+      } catch (e) {
+        console.warn('Audio construction error:', e);
+        fallbackSpeechSynthesis(clean, lang);
+      }
+    }
+
+    function fallbackSpeechSynthesis(clean, lang) {
+      if (!('speechSynthesis' in window)) return;
+      try {
+        if (window.speechSynthesis.paused) window.speechSynthesis.resume();
+      } catch (_) {}
 
       const utter = new SpeechSynthesisUtterance(clean);
       if (!selectedVoice) initVoices();
       if (selectedVoice) utter.voice = selectedVoice;
-      utter.lang = 'en-US';
       utter.rate = 1.0;
       utter.pitch = 1.0;
 
-      // Retain utterance reference to prevent Chrome garbage collection cutoff bug
       window._activeUtterances.push(utter);
       const cleanup = () => {
         const idx = window._activeUtterances.indexOf(utter);
@@ -3783,7 +3844,6 @@
         onStateChanged('LISTENING');
       };
 
-      // Slight 35ms deferral prevents Chromium bug where cancel() silently cancels immediate speak()
       setTimeout(() => {
         try {
           window.speechSynthesis.resume();
@@ -3795,6 +3855,13 @@
     }
 
     function stopSpeaking() {
+      if (window._currentTTSAudio) {
+        try {
+          window._currentTTSAudio.pause();
+          window._currentTTSAudio.currentTime = 0;
+        } catch (_) {}
+        window._currentTTSAudio = null;
+      }
       if ('speechSynthesis' in window) {
         try {
           if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
@@ -3809,7 +3876,168 @@
       onVisemeFrame(0.0, 0.0, 0.0, '');
     }
 
-    // ── Continuous Voice Recognition (Speech-to-Text) ───────────────────────────
+    // ── Universal Voice Capture (MediaRecorder + VAD + Gemini Audio) ─────────────
+    let micMediaRecorder = null;
+    let micAudioChunks = [];
+    let vadAudioCtx = null;
+    let vadAnalyser = null;
+    let vadInterval = null;
+    let isUserSpeakingAudio = false;
+    let silenceStartTime = 0;
+    let isPushToTalkActive = false;
+
+    function initMediaRecorderVoice(stream) {
+      if (!stream || isEmbeddedQt()) return;
+      if (typeof MediaRecorder === 'undefined') {
+        console.warn('MediaRecorder not available in this browser');
+        return;
+      }
+
+      let mimeType = 'audio/webm';
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+        mimeType = 'audio/webm;codecs=opus';
+      } else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
+        mimeType = 'audio/ogg;codecs=opus';
+      } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+        mimeType = 'audio/mp4';
+      }
+
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextClass) {
+          vadAudioCtx = new AudioContextClass();
+          const source = vadAudioCtx.createMediaStreamSource(stream);
+          vadAnalyser = vadAudioCtx.createAnalyser();
+          vadAnalyser.fftSize = 512;
+          vadAnalyser.smoothingTimeConstant = 0.3;
+          source.connect(vadAnalyser);
+        }
+      } catch (err) {
+        console.warn('VAD AudioContext init error:', err);
+      }
+
+      window._startSpeechRecording = () => {
+        if (state.isMuted || callState !== 'connected' || state.aiState === 'SPEAKING') return;
+        if (micMediaRecorder && micMediaRecorder.state === 'recording') return;
+
+        micAudioChunks = [];
+        try {
+          micMediaRecorder = new MediaRecorder(stream, { mimeType });
+        } catch (e) {
+          try { micMediaRecorder = new MediaRecorder(stream); } catch (e2) { return; }
+        }
+
+        micMediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) {
+            micAudioChunks.push(e.data);
+          }
+        };
+
+        micMediaRecorder.onstop = () => {
+          if (micAudioChunks.length === 0) return;
+          const blob = new Blob(micAudioChunks, { type: micMediaRecorder.mimeType || mimeType });
+          micAudioChunks = [];
+
+          if (blob.size > 3000) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const res = reader.result;
+              const base64Data = typeof res === 'string' ? res.split(',')[1] : '';
+              if (base64Data && base64Data.length > 200) {
+                console.log(`[Voice] Sending user voice (${blob.size} bytes) to Ilubot...`);
+                if (window.wsBridge && window.wsBridge.readyState === WebSocket.OPEN) {
+                  window.wsBridge.send(JSON.stringify({
+                    action: 'audio_command',
+                    audio: base64Data,
+                    mime: blob.type || 'audio/webm'
+                  }));
+                  onStateChanged('THINKING');
+                }
+              }
+            };
+            reader.readAsDataURL(blob);
+          }
+        };
+
+        try {
+          micMediaRecorder.start(250);
+          isUserSpeakingAudio = true;
+          const micInd = document.getElementById('self-mic-indicator');
+          if (micInd) micInd.style.transform = 'scale(1.25)';
+        } catch (e) {
+          console.warn('MediaRecorder start error:', e);
+        }
+      };
+
+      window._stopSpeechRecording = () => {
+        if (micMediaRecorder && micMediaRecorder.state === 'recording') {
+          try {
+            micMediaRecorder.stop();
+          } catch (_) {}
+        }
+        isUserSpeakingAudio = false;
+        const micInd = document.getElementById('self-mic-indicator');
+        if (micInd) micInd.style.transform = '';
+      };
+
+      // VAD volume monitoring loop
+      if (vadInterval) clearInterval(vadInterval);
+      const dataArray = new Uint8Array(vadAnalyser ? vadAnalyser.fftSize : 256);
+      vadInterval = setInterval(() => {
+        if (isPushToTalkActive) return; // Managed by spacebar
+        if (!vadAnalyser || state.isMuted || callState !== 'connected') {
+          if (isUserSpeakingAudio) window._stopSpeechRecording();
+          return;
+        }
+
+        if (state.aiState === 'SPEAKING') {
+          if (isUserSpeakingAudio) window._stopSpeechRecording();
+          return;
+        }
+
+        vadAnalyser.getByteTimeDomainData(dataArray);
+        let sumSquares = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          const norm = (dataArray[i] - 128) / 128;
+          sumSquares += norm * norm;
+        }
+        const rms = Math.sqrt(sumSquares / dataArray.length);
+
+        const SPEECH_THRESHOLD = 0.04;
+        const SILENCE_TIMEOUT_MS = 900;
+
+        if (rms > SPEECH_THRESHOLD) {
+          silenceStartTime = 0;
+          if (!isUserSpeakingAudio) {
+            window._startSpeechRecording();
+          }
+        } else {
+          if (isUserSpeakingAudio) {
+            if (silenceStartTime === 0) {
+              silenceStartTime = Date.now();
+            } else if (Date.now() - silenceStartTime > SILENCE_TIMEOUT_MS) {
+              window._stopSpeechRecording();
+              silenceStartTime = 0;
+            }
+          }
+        }
+      }, 70);
+    }
+
+    function startPushToTalk() {
+      if (callState !== 'connected' || state.isMuted) return;
+      isPushToTalkActive = true;
+      if (state.aiState === 'SPEAKING') interruptAI();
+      if (window._startSpeechRecording) window._startSpeechRecording();
+    }
+
+    function stopPushToTalk() {
+      if (!isPushToTalkActive) return;
+      isPushToTalkActive = false;
+      if (window._stopSpeechRecording) window._stopSpeechRecording();
+    }
+
+    // ── Continuous Voice Recognition (Speech-to-Text Fallback) ───────────────────
     let speechRec = null;
     let isRecognizing = false;
 
@@ -3824,7 +4052,28 @@
       speechRec = new SpeechRec();
       speechRec.continuous = true;
       speechRec.interimResults = true;
-      speechRec.lang = 'en-US';
+
+      const bcpMap = {
+        'english': 'en-US',
+        'malayalam': 'ml-IN',
+        'hindi': 'hi-IN',
+        'arabic': 'ar-SA',
+        'tamil': 'ta-IN',
+        'urdu': 'ur-PK',
+        'bengali': 'bn-IN',
+        'french': 'fr-FR',
+        'spanish': 'es-ES',
+        'german': 'de-DE',
+        'turkish': 'tr-TR',
+        'indonesian': 'id-ID',
+        'malay': 'ms-MY',
+        'chinese': 'zh-CN',
+        'japanese': 'ja-JP',
+        'korean': 'ko-KR'
+      };
+      const langSel = document.getElementById('call-lang-select');
+      const lang = (langSel ? langSel.value : 'English').toLowerCase();
+      speechRec.lang = bcpMap[lang] || 'en-US';
 
       speechRec.onstart = () => {
         isRecognizing = true;
@@ -3887,6 +4136,9 @@
         try { speechRec.stop(); } catch (_) {}
         isRecognizing = false;
       }
+      if (window._stopSpeechRecording) {
+        window._stopSpeechRecording();
+      }
     }
 
     // ── Chat Drawer & Messages ────────────────────────────────────────────────────
@@ -3941,7 +4193,7 @@
 
     // ── Keyboard Shortcuts ────────────────────────────────────────────────────────
     window.addEventListener('keydown', (e) => {
-      if (document.activeElement && document.activeElement.tagName === 'INPUT') {
+      if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
         if (e.key === 'Escape') {
           toggleChat(false);
         }
@@ -3950,6 +4202,10 @@
 
       if (e.key === 'Escape') {
         interruptAI();
+      } else if (e.code === 'Space' && !e.repeat) {
+        // Push-to-Talk: Hold Space to speak, release to send
+        e.preventDefault();
+        startPushToTalk();
       } else if (e.key.toLowerCase() === 'm' || e.key === 'F4') {
         e.preventDefault();
         toggleMute();
@@ -3957,6 +4213,14 @@
         toggleChat();
       } else if (e.key.toLowerCase() === 'v') {
         toggleCamera();
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (e.code === 'Space') {
+        if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) return;
+        e.preventDefault();
+        stopPushToTalk();
       }
     });
 

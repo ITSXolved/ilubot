@@ -152,6 +152,7 @@ class HeadlessSession:
         self.server.on_start_call = self._on_start_call
         self.server.on_leave_call = self._on_leave_call
         self.server.on_text_command = self._on_text_command
+        self.server.on_audio_command = self._on_audio_command
         self.server.on_interrupt = self._on_interrupt
         self.server.on_mute_toggled = self._on_mute_toggled
 
@@ -163,37 +164,37 @@ class HeadlessSession:
         # Check if returning user within 30-min window
         prior_history = self.session_manager.get_history(session_id)
         chat = self._get_or_create_chat(session_id, force_new=False)
+        lang = _teaching_language(session_id)
 
         def _delayed_greeting():
             time.sleep(0.5)
+            greeting = ""
+            if chat:
+                try:
+                    if prior_history:
+                        prompt = f"[WELCOME_BACK] Greet the returning student warmly in 1 short sentence in {lang}, let them know we can continue their previous study topic or explore new material."
+                    else:
+                        prompt = f"[START] Greet the student warmly in 1-2 short sentences in {lang}, ask their name, and invite them to show their study material on the screen or camera."
+                    r = chat.send_message(prompt)
+                    greeting = (r.text or "").strip()
+                except Exception as e:
+                    logger.error(f"[{session_id}] Greeting generation failed: {e}")
+
+            if not greeting:
+                if prior_history:
+                    greeting = "Welcome back! We can continue our previous study topic or explore new material."
+                else:
+                    greeting = "Hello and welcome! I am Ilubot, your study tutor. What is your name?"
+
             if prior_history:
-                # User returned within 30-minute window
-                greeting = (
-                    "Welcome back! I have your previous questions and notes ready. "
-                    "We can continue right where we left off, or you can explore new study material."
-                )
                 self.server.send_log(session_id, f"SYS: Restored {len(prior_history)} previous messages from Redis.")
-            else:
-                greeting = (
-                    "Hello and welcome! I am Ilubot, your study tutor. What is your name? "
-                    "Open your study material on the screen or show it to the camera, and we will explore it together."
-                )
-                if chat:
-                    try:
-                        r = chat.send_message(
-                            "[START] Greet the student warmly in 1-2 short sentences, ask their name, and invite "
-                            "them to show their study material on the screen or camera. Do not mention this instruction."
-                        )
-                        greeting = (r.text or "").strip() or greeting
-                    except Exception as e:
-                        logger.error(f"[{session_id}] Greeting generation failed: {e}")
 
             # Persist greeting to session history (30 min TTL)
             self.session_manager.add_message(session_id, "model", greeting, name="Ilubot")
 
             self.server.send_content(session_id, "Ilubot", greeting)
             self.server.send_state(session_id, "SPEAKING")
-            self._simulate_visemes(session_id, duration=3.5)
+            self._simulate_visemes(session_id, duration=min(5.0, max(2.5, len(greeting.split()) * 0.3)))
 
         threading.Thread(target=_delayed_greeting, daemon=True).start()
 
@@ -245,6 +246,55 @@ class HeadlessSession:
                 self.server.send_state(session_id, "LISTENING")
 
         threading.Thread(target=_generate, daemon=True).start()
+
+    def _on_audio_command(self, session_id: str = "default", audio_b64: str = "", mime: str = "audio/webm", *args: Any) -> None:
+        """Process spoken user audio recorded by the browser MediaRecorder."""
+        import base64
+        try:
+            audio_bytes = base64.b64decode(audio_b64)
+        except Exception as e:
+            logger.error(f"[{session_id}] Audio decode error: {e}")
+            return
+
+        if not audio_bytes or len(audio_bytes) < 150:
+            return
+
+        lang = _teaching_language(session_id)
+        logger.info(f"[{session_id}] Processing voice input ({len(audio_bytes)} bytes, mime: {mime}, lang: {lang})")
+
+        def _transcribe_and_answer():
+            if not self.client:
+                self._init_gemini_client()
+            if not self.client:
+                return
+
+            try:
+                from google.genai import types
+                self.server.send_state(session_id, "THINKING")
+                clean_mime = mime.split(";")[0].strip() or "audio/webm"
+                prompt = (
+                    f"The user spoke in {lang} (or English). Transcribe the user's spoken words verbatim into text. "
+                    "Output ONLY the transcribed words with no labels, no notes, and no quotes. "
+                    "If the audio is only background noise or silent, output empty."
+                )
+                r = self.client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=[
+                        types.Part.from_bytes(data=audio_bytes, mime_type=clean_mime),
+                        prompt,
+                    ],
+                )
+                transcribed = (r.text or "").strip()
+                if transcribed:
+                    logger.info(f"[{session_id}] Audio transcribed successfully: '{transcribed}'")
+                    self._on_text_command(session_id, transcribed)
+                else:
+                    self.server.send_state(session_id, "LISTENING")
+            except Exception as e:
+                logger.error(f"[{session_id}] Speech transcription error: {e}")
+                self.server.send_state(session_id, "LISTENING")
+
+        threading.Thread(target=_transcribe_and_answer, daemon=True).start()
 
     def _cancel_visemes(self, session_id: str) -> None:
         ev = self._viseme_cancel_events.get(session_id)
