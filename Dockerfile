@@ -1,8 +1,8 @@
-# ── Ilubot 3D Conference Server Dockerfile ─────────────────────────────────────
-# Optimized for Google Cloud Run, Docker Compose, and Containerized Deployments
+# ── Ilubot Study Tutor: web widget + webhook API container ─────────────────────
+# Serves the 3D tutor UI (/ and /embed.js), the WebSocket call (/ws) and the
+# webhook API (/api/v1/*). Sessions/history live in Redis (REDIS_URL).
 FROM python:3.11-slim
 
-# Prevent Python from buffering stdout/stderr and writing bytecode
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8080 \
@@ -10,18 +10,13 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install minimal OS dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python requirements
 COPY requirements-docker.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements-docker.txt
 
-# Copy application assets and codebase
 COPY web/ ./web/
 COPY avatar/ ./avatar/
 COPY core/ ./core/
@@ -31,9 +26,12 @@ COPY providers/ ./providers/
 COPY config/ ./config/
 COPY headless_server.py .
 
-# Healthcheck to verify FastAPI responds on PORT
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${PORT}/ || exit 1
+# Run unprivileged; config/ stays writable for the saved teaching-language setting.
+RUN useradd --create-home --uid 10001 ilubot && chown -R ilubot:ilubot /app/config
+USER ilubot
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -fsS http://localhost:${PORT}/healthz || exit 1
 
 EXPOSE 8080
 

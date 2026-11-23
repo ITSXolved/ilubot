@@ -19,3 +19,10 @@ scratch/
 brain/
 dashboard/cert.*
 dashboard/key.*
+
+# Secrets and local state never go into the image (pass them as env vars)
+.env
+.env.*
+!.env.example
+config/api_keys.json
+graphify-out/

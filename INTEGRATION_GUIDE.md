@@ -23,19 +23,57 @@ Ilubot runs in two primary modes:
 
 ## 2. Quick Start: Running Ilubot as a Study Service
 
-### Option A — Docker / Docker Compose
+### Option A — Docker / Docker Compose (recommended)
 ```bash
-export GEMINI_API_KEY="your_gemini_api_key"
-docker compose up --build
+cp .env.example .env      # set GEMINI_API_KEY, ILUBOT_API_KEYS, WEBHOOK_SECRET, ALLOWED_ORIGINS
+docker compose up -d --build
+curl http://localhost:8080/healthz   # {"status":"ok","session_store":"redis"}
 ```
-Ilubot is now available at `http://localhost:8080` (WebSocket at `ws://localhost:8080/ws`).
+This starts two containers: `ilubot` (UI, WebSocket, webhook API) and `ilubot-redis` (sessions + history, auto-deleted after 30 min idle). Redis is not exposed outside the compose network. Put the `ilubot` container behind HTTPS (a reverse proxy, a load balancer or Cloud Run) before sites use it.
+
+### Connect any website: two ways
+
+**1. Drop-in widget (no backend needed).** Add one tag to any page:
+```html
+<script src="https://YOUR-ILUBOT-HOST/embed.js" defer
+        data-position="right" data-color="#2563eb" data-label="Ask Ilubot"></script>
+```
+A floating button opens the full voice + 3D tutor in a panel (full-screen on phones). Each visitor gets their own conversation. Control it from JS with `Ilubot.open()`, `Ilubot.close()` and `Ilubot.toggle()`. The site's origin must be in `ALLOWED_ORIGINS`.
+
+**2. Webhook / REST API (from your backend).** Every `/api/v1/*` call needs `Authorization: Bearer <one of ILUBOT_API_KEYS>`. Never put this key in browser code.
+
+```bash
+# Synchronous: reply in the response
+curl -X POST https://YOUR-ILUBOT-HOST/api/v1/chat \
+  -H "Authorization: Bearer $ILUBOT_KEY" -H "Content-Type: application/json" \
+  -d '{"session_id":"student-1234-course-7","message":"Why does ice float?","metadata":{"user_id":1234}}'
+# -> {"request_id":"…","session_id":"student-1234-course-7","reply":"…","metadata":{"user_id":1234}}
+```
+
+| Field | Notes |
+|---|---|
+| `message` | Required, at most 4000 characters. |
+| `session_id` | Optional, 8–64 chars of `A-Z a-z 0-9 _ -`. Reuse it to continue a conversation; leave it out to start a new one (it is returned). Sessions expire after `SESSION_TTL_SECONDS` without activity. |
+| `audio` | `true` adds `audio_wav_base64` (the tutor's voice). Slower; the default is text only. |
+| `callback_url` | Async mode: the API answers `202 {"status":"accepted"}` immediately and later POSTs `{"event":"chat.reply", …}` (or `"chat.error"`) to this https URL, retrying up to 3 times. |
+| `metadata` | Any JSON. It is echoed back untouched (useful for routing callbacks). |
+
+Other endpoints: `GET /api/v1/sessions/{id}/history` returns the conversation, and `DELETE /api/v1/sessions/{id}` ends it immediately.
+
+**Verifying callbacks.** Each callback carries `X-Ilubot-Timestamp` and `X-Ilubot-Signature: sha256=<hex>`, where the hex is HMAC-SHA256 of `"<timestamp>.<raw body>"` keyed with `WEBHOOK_SECRET`:
+```python
+import hmac, hashlib
+expected = "sha256=" + hmac.new(SECRET, ts.encode() + b"." + raw_body, hashlib.sha256).hexdigest()
+ok = hmac.compare_digest(expected, signature_header) and abs(time.time() - int(ts)) < 300
+```
+For safety, callbacks only go to `https` URLs on public addresses. Set `WEBHOOK_CALLBACK_HOSTS` to pin them to your own domains.
 
 ### Option B — Python (Local or Sidecar Process)
 ```bash
 pip install -r requirements-docker.txt
 export GEMINI_API_KEY="your_gemini_api_key"
 export TEACHING_LANGUAGE="English"        # optional default
-export GEMINI_MODEL="gemini-2.5-flash"    # optional override
+export GEMINI_MODEL="gemini-3.5-flash-lite"    # optional override
 export PORT=8080
 python headless_server.py
 ```

@@ -3053,10 +3053,21 @@
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       }
       if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
+        audioCtx.resume().catch(() => {});
       }
       return audioCtx;
     }
+
+    ['click', 'pointerdown', 'keydown', 'touchstart'].forEach(evt => {
+      window.addEventListener(evt, () => {
+        try {
+          const ctx = getAudioContext();
+          if (ctx && ctx.state === 'suspended') {
+            ctx.resume().catch(() => {});
+          }
+        } catch (_) {}
+      }, { passive: true });
+    });
 
     function playPhoneRingBurst() {
       try {
@@ -3382,7 +3393,11 @@
     function initWebSocket() {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host || '127.0.0.1:8085';
-      const wsUrl = `${proto}//${host}/ws`;
+      // Conversation session id: kept in localStorage so a reload resumes the same
+      // server-side history (expires there after 30 min of inactivity).
+      let sid = '';
+      try { sid = localStorage.getItem('ilubot_sid') || ''; } catch (_) {}
+      const wsUrl = `${proto}//${host}/ws${sid ? `?sid=${encodeURIComponent(sid)}` : ''}`;
       let ws = null;
 
       try {
@@ -3394,17 +3409,50 @@
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data.type === 'state') onStateChanged(data.state);
+            if (data.type === 'state') {
+              if (data.state === 'LISTENING' && isPlayingAudio) {
+                // Audio is still actively playing, do not let premature LISTENING cut it off
+                return;
+              }
+              onStateChanged(data.state);
+            }
             else if (data.type === 'audio_level') onAudioLevel(data.level);
             else if (data.type === 'viseme') onVisemeFrame(data.level, data.openness, data.width, data.tag);
             else if (data.type === 'log') addChatMessage('system', data.message);
-            else if (data.type === 'content') addChatMessage('assistant', `${data.title}\n${data.text}`);
+            else if (data.type === 'session') {
+              try { localStorage.setItem('ilubot_sid', data.sid); } catch (_) {}
+            }
+            else if (data.type === 'history') {
+              // Resumed session: redraw earlier messages without speaking them.
+              if (!window._historyShown) {
+                window._historyShown = true;
+                addChatMessage('system', 'Resumed your previous conversation.');
+                (data.messages || []).forEach(m => addChatMessage(m.role, m.role === 'assistant' ? `Ilubot\n${m.text}` : m.text, true));
+              }
+            }
+            else if (data.type === 'content') {
+              window._hasRemoteAudio = !!data.audio;
+              window._currentAssistantText = data.text || '';
+              addChatMessage('assistant', `${data.title}\n${data.text}`);
+              if (data.audio) {
+                playRemoteAudio(data.audio);
+              }
+            }
+            else if (data.type === 'audio') playRemoteAudio(data.audio);
             else if (data.type === 'mute') setMuteState(data.muted);
           } catch (e) {
             console.error('WS parse error:', e);
           }
         };
-        ws.onclose = () => {
+        ws.onclose = (ev) => {
+          if (window.wsBridge !== ws) return; // superseded socket; a newer one is active
+          if (ev && ev.code === 4000) {
+            // Another tab took over the session: go silent here instead of echoing it.
+            stopSpeaking();
+            stopVoiceRecognition();
+            addChatMessage('system', '⚠️ Ilubot was opened in another tab, so this tab is now inactive. Reload to use it here.');
+            return;
+          }
           setTimeout(initWebSocket, 2000);
         };
 
@@ -3431,6 +3479,10 @@
           enterSleepingMode();
         }
       }
+
+      // Echo guard: keep the mic fully off while Ilubot talks so it never hears itself.
+      if (state.aiState === 'SPEAKING') pauseMicForAI();
+      else if (state.aiState === 'LISTENING') resumeMicAfterAI();
 
       if (state.aiState === 'SPEAKING' && typeof faceController !== 'undefined') {
         faceController.greet(1.2);
@@ -3665,18 +3717,30 @@
       if (!clean) return;
 
       const utter = new SpeechSynthesisUtterance(clean);
-      if (!selectedVoice) initVoices();
-      if (selectedVoice) utter.voice = selectedVoice;
+      const isAscii = /^[\x00-\x7F]*$/.test(clean);
+      if (!isAscii) {
+        const voices = window.speechSynthesis.getVoices() || [];
+        const match = voices.find(v => !v.lang.startsWith('en'));
+        if (match) {
+          utter.voice = match;
+          utter.lang = match.lang;
+        }
+      } else {
+        if (!selectedVoice) initVoices();
+        if (selectedVoice) utter.voice = selectedVoice;
+      }
       utter.rate = 1.05;
       utter.pitch = 1.0;
 
       utter.onstart = () => {
+        isPlayingAudio = true;
         onStateChanged('SPEAKING');
         const vowels = ['AA', 'E', 'I', 'O', 'U'];
         if (speechAnimInterval) clearInterval(speechAnimInterval);
         speechAnimInterval = setInterval(() => {
-          if (state.aiState !== 'SPEAKING') {
+          if (!isPlayingAudio || state.aiState !== 'SPEAKING') {
             clearInterval(speechAnimInterval);
+            speechAnimInterval = null;
             return;
           }
           const lvl = 0.45 + Math.random() * 0.45;
@@ -3688,11 +3752,13 @@
       };
 
       utter.onend = () => {
+        isPlayingAudio = false;
         stopSpeaking();
         onStateChanged('LISTENING');
       };
 
       utter.onerror = () => {
+        isPlayingAudio = false;
         stopSpeaking();
         onStateChanged('LISTENING');
       };
@@ -3700,11 +3766,141 @@
       try {
         window.speechSynthesis.speak(utter);
       } catch (e) {
+        isPlayingAudio = false;
         console.warn('Speech synthesis error:', e);
       }
     }
 
+    let currentAudioSource = null;
+    let isPlayingAudio = false;
+
+    async function playRemoteAudio(b64Wav) {
+      if (!b64Wav) return;
+      stopSpeaking();
+      try {
+        const ctx = getAudioContext();
+        if (ctx.state === 'suspended') {
+          await ctx.resume().catch(() => {});
+        }
+
+        const binaryStr = atob(b64Wav);
+        const len = binaryStr.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+
+        // Promise-based decodeAudioData with callback fallback
+        const audioBuffer = await new Promise((resolve, reject) => {
+          try {
+            const p = ctx.decodeAudioData(bytes.buffer.slice(0), resolve, reject);
+            if (p && typeof p.then === 'function') {
+              p.then(resolve).catch(reject);
+            }
+          } catch (e) {
+            reject(e);
+          }
+        });
+
+        stopSpeaking();
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = 1.0;
+
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 64;
+
+        source.connect(analyser);
+        analyser.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        currentAudioSource = source;
+        isPlayingAudio = true;
+
+        onStateChanged('SPEAKING');
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const vowels = ['AA', 'E', 'I', 'O', 'U'];
+        if (speechAnimInterval) clearInterval(speechAnimInterval);
+        speechAnimInterval = setInterval(() => {
+          if (!isPlayingAudio || state.aiState !== 'SPEAKING') {
+            clearInterval(speechAnimInterval);
+            speechAnimInterval = null;
+            return;
+          }
+          analyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+          const avg = sum / dataArray.length;
+          const lvl = Math.min(1.0, avg / 128.0);
+          onAudioLevel(lvl);
+          if (lvl > 0.03) {
+            const tag = vowels[Math.floor(Math.random() * vowels.length)];
+            onVisemeFrame(lvl, lvl * 0.9, lvl * 0.6, tag);
+          } else {
+            onVisemeFrame(0.0, 0.0, 0.0, '');
+          }
+        }, 45);
+
+        source.onended = () => {
+          if (currentAudioSource === source) {
+            isPlayingAudio = false;
+            currentAudioSource = null;
+            if (speechAnimInterval) {
+              clearInterval(speechAnimInterval);
+              speechAnimInterval = null;
+            }
+            onAudioLevel(0.0);
+            onVisemeFrame(0.0, 0.0, 0.0, '');
+            onStateChanged('LISTENING');
+          }
+        };
+
+        source.start(0);
+        console.log('[Conference] Audio started playing, duration:', audioBuffer.duration.toFixed(2), 's');
+      } catch (err) {
+        isPlayingAudio = false;
+        console.warn('Web Audio decode failed, falling back to HTML Audio:', err);
+        fallbackHtmlAudio(b64Wav);
+      }
+    }
+
+    function fallbackHtmlAudio(b64Wav) {
+      try {
+        const a = new Audio("data:audio/wav;base64," + b64Wav);
+        a.volume = 1.0;
+        isPlayingAudio = true;
+        a.onplay = () => {
+          isPlayingAudio = true;
+          onStateChanged('SPEAKING');
+        };
+        a.onended = () => {
+          isPlayingAudio = false;
+          onStateChanged('LISTENING');
+        };
+        a.play().catch(e => {
+          isPlayingAudio = false;
+          console.warn('HTML Audio playback prevented by browser, speaking via TTS fallback:', e);
+          if (window._currentAssistantText) {
+            speakText(window._currentAssistantText);
+          }
+        });
+      } catch (e) {
+        isPlayingAudio = false;
+        console.warn('fallbackHtmlAudio error:', e);
+        if (window._currentAssistantText) {
+          speakText(window._currentAssistantText);
+        }
+      }
+    }
+
     function stopSpeaking() {
+      isPlayingAudio = false;
+      if (currentAudioSource) {
+        try { currentAudioSource.stop(); } catch(_) {}
+        currentAudioSource = null;
+      }
       if ('speechSynthesis' in window) {
         try { window.speechSynthesis.cancel(); } catch (_) {}
       }
@@ -3712,34 +3908,76 @@
         clearInterval(speechAnimInterval);
         speechAnimInterval = null;
       }
+      onAudioLevel(0.0);
       onVisemeFrame(0.0, 0.0, 0.0, '');
     }
 
     // ── Continuous Voice Recognition (Speech-to-Text) ───────────────────────────
     let speechRec = null;
     let isRecognizing = false;
+    let micPausedForAI = false;
+    let micResumeTimer = null;
+
+    function pauseMicForAI() {
+      clearTimeout(micResumeTimer);
+      micPausedForAI = true;
+      // abort() (not stop()) discards any half-heard phrase, which would be Ilubot's own voice.
+      if (speechRec && isRecognizing) {
+        try { speechRec.abort(); } catch (_) {}
+      }
+    }
+
+    function resumeMicAfterAI() {
+      if (!micPausedForAI) return;
+      clearTimeout(micResumeTimer);
+      // Short tail so speaker output and room reverb die out before listening again.
+      micResumeTimer = setTimeout(() => {
+        micPausedForAI = false;
+        if (callState === 'connected' && !state.isMuted) startVoiceRecognition();
+      }, 700);
+    }
 
     function initVoiceRecognition() {
       if (isEmbeddedQt()) return; // Desktop app uses PyAudio for direct mic capture
       const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRec) {
         console.warn('SpeechRecognition not supported in this browser.');
+        addChatMessage('system', 'ℹ️ Speech recognition is best supported in Google Chrome / Edge. You can also type in the chat box below.');
         return;
       }
 
       speechRec = new SpeechRec();
       speechRec.continuous = true;
       speechRec.interimResults = true;
-      speechRec.lang = 'en-US';
+      const langSel = document.getElementById('call-lang-select');
+      const langVal = (langSel ? langSel.value : 'English').toLowerCase();
+      const LANG_MAP = {
+        'english': 'en-US',
+        'malayalam': 'ml-IN',
+        'hindi': 'hi-IN',
+        'tamil': 'ta-IN',
+        'arabic': 'ar-SA',
+        'urdu': 'ur-PK',
+        'french': 'fr-FR',
+        'spanish': 'es-ES',
+        'german': 'de-DE'
+      };
+      speechRec.lang = LANG_MAP[langVal] || 'en-US';
 
       speechRec.onstart = () => {
         isRecognizing = true;
         const micInd = document.getElementById('self-mic-indicator');
         if (micInd) micInd.style.opacity = '1.0';
+        addChatMessage('system', '🎙️ Microphone listening. Speak or type anytime.');
       };
 
       speechRec.onresult = (event) => {
         if (state.isMuted || callState !== 'connected') return;
+
+        // Self-Echo Guard: Ignore mic inputs while AI is speaking or audio is playing to prevent speaker sound from killing playback
+        if (micPausedForAI || isPlayingAudio || state.aiState === 'SPEAKING') {
+          return;
+        }
 
         let interim = '';
         let finalTxt = '';
@@ -3752,12 +3990,6 @@
           }
         }
 
-        // Interrupt AI if user speaks
-        if ((finalTxt || interim) && state.aiState === 'SPEAKING') {
-          stopSpeaking();
-          onStateChanged('LISTENING');
-        }
-
         if (finalTxt.trim()) {
           const cmd = finalTxt.trim();
           sendChatMessage(cmd);
@@ -3765,14 +3997,16 @@
       };
 
       speechRec.onerror = (e) => {
-        if (e.error !== 'no-speech') {
+        if (e.error === 'not-allowed') {
+          addChatMessage('system', '⚠️ Microphone blocked. Please allow microphone access in your browser address bar.');
+        } else if (e.error !== 'no-speech') {
           console.warn('Speech recognition warning:', e.error);
         }
       };
 
       speechRec.onend = () => {
         isRecognizing = false;
-        if (callState === 'connected' && !state.isMuted) {
+        if (callState === 'connected' && !state.isMuted && !micPausedForAI) {
           try { speechRec.start(); } catch (_) {}
         }
       };
@@ -3780,7 +4014,7 @@
 
     function startVoiceRecognition() {
       if (!speechRec) initVoiceRecognition();
-      if (speechRec && !isRecognizing && !state.isMuted) {
+      if (speechRec && !isRecognizing && !state.isMuted && !micPausedForAI) {
         try { speechRec.start(); } catch (_) {}
       }
     }
@@ -3804,7 +4038,7 @@
       }
     }
 
-    function addChatMessage(role, text) {
+    function addChatMessage(role, text, silent = false) {
       const body = document.getElementById('chat-body');
       const msg = document.createElement('div');
       msg.className = `chat-msg ${role}`;
@@ -3824,10 +4058,11 @@
       body.appendChild(msg);
       body.scrollTop = body.scrollHeight;
 
-      // Speak assistant answers using browser voice
-      if (role === 'assistant') {
+      // Speak assistant answers using browser voice only if native audio is not provided
+      if (role === 'assistant' && !window._hasRemoteAudio && !silent) {
         speakText(text);
       }
+      window._hasRemoteAudio = false;
     }
 
     function sendChatMessage(text) {
@@ -3958,6 +4193,8 @@
       addChatMessage('system', `Voice switched to ${v}.`);
       if (window.pyBridge && window.pyBridge.onVoiceChanged) {
         window.pyBridge.onVoiceChanged(v);
+      } else if (window.wsBridge && window.wsBridge.readyState === WebSocket.OPEN) {
+        window.wsBridge.send(JSON.stringify({ action: 'voice_changed', voice: v }));
       }
     });
 
