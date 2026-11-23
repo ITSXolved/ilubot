@@ -1,4 +1,19 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: ilubot-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --save 60 1
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   ilubot-conference:
     build:
       context: .
@@ -11,4 +26,13 @@ services:
       - PORT=8080
       - HOST=0.0.0.0
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_SESSION_TTL=1800
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  redis-data:
+    driver: local

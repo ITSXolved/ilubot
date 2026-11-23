@@ -52,12 +52,13 @@ psutil>=5.9,<8
 send2trash                   # file_controller — recoverable deletes
 python-pptx                  # file_processor — presentation reading
 
-# ── Remote dashboard (control from your phone) ────────────────────────────────
+# ── Remote dashboard & session caching ────────────────────────────────────────
 fastapi>=0.110,<1
 uvicorn[standard]>=0.27,<1
 cryptography>=42,<50
 python-multipart>=0.0.9,<1
 qrcode[pil]>=7,<9
+redis>=5.0.0
 
 # ── Plugin extras ─────────────────────────────────────────────────────────────
 # Plugins are downloaded one file at a time from the community, so their

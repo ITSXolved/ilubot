@@ -3,6 +3,7 @@ core/conference_server.py — Local HTTP & WebSocket server for the 3D Video Con
 
 Serves the 3D WebGL avatar interface, handles real-time viseme and state broadcasting,
 and connects conference controls (Mute, Interrupt, Chat, Settings) to the Jarvis backend.
+Supports multi-user session isolation and Redis-backed session history.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import json
 import logging
 import threading
 import os
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -20,6 +22,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
+
+from core.redis_session import get_session_manager, RedisSessionManager
+
+logger = logging.getLogger("ConferenceServer")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = BASE_DIR / "web"
@@ -41,20 +47,43 @@ class ConferenceServer:
             allow_headers=["*"],
         )
         self.active_websockets: list[WebSocket] = []
+        self.session_websockets: dict[str, set[WebSocket]] = {}
+        self.ws_to_session: dict[WebSocket, str] = {}
+        self.session_manager: RedisSessionManager = get_session_manager()
+
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._server: uvicorn.Server | None = None
 
-        # Callbacks hooked by JarvisUI
-        self.on_interrupt: Callable[[], None] | None = None
-        self.on_mute_toggled: Callable[[bool], None] | None = None
-        self.on_text_command: Callable[[str], None] | None = None
-        self.on_voice_changed: Callable[[str], None] | None = None
-        self.on_screen_capture: Callable[[], None] | None = None
-        self.on_leave_call: Callable[[], None] | None = None
-        self.on_start_call: Callable[[], None] | None = None
+        # Callbacks hooked by JarvisUI or HeadlessSession
+        # Supports either (arg) or (session_id, arg) signatures
+        self.on_interrupt: Callable[..., None] | None = None
+        self.on_mute_toggled: Callable[..., None] | None = None
+        self.on_text_command: Callable[..., None] | None = None
+        self.on_voice_changed: Callable[..., None] | None = None
+        self.on_screen_capture: Callable[..., None] | None = None
+        self.on_leave_call: Callable[..., None] | None = None
+        self.on_start_call: Callable[..., None] | None = None
 
         self._setup_routes()
+
+    def _dispatch_callback(self, cb: Any, session_id: str, *args: Any) -> None:
+        """Dispatch callback supporting both desktop (no session_id) and multi-session (session_id) handlers."""
+        if not cb:
+            return
+        import inspect
+        try:
+            sig = inspect.signature(cb)
+            param_names = list(sig.parameters.keys())
+            if "session_id" in param_names or len(param_names) == len(args) + 1:
+                cb(session_id, *args)
+            else:
+                cb(*args)
+        except Exception as e:
+            try:
+                cb(*args)
+            except Exception as inner_e:
+                logger.error(f"[ConferenceServer] Callback dispatch error: {inner_e} (initial: {e})")
 
     def _setup_routes(self) -> None:
         @self.app.get("/")
@@ -88,17 +117,21 @@ class ConferenceServer:
                 return JSONResponse({"error": str(e)}, status_code=500)
 
         @self.app.get("/api/teaching_language")
-        async def get_teaching_language_route():
+        async def get_teaching_language_route(request: Request):
+            session_id = request.query_params.get("session_id", "").strip()
             try:
                 from memory.config_manager import TEACHING_LANGUAGES, get_teaching_language
-                return {"language": get_teaching_language(), "options": TEACHING_LANGUAGES}
+                lang = ""
+                if session_id:
+                    lang = self.session_manager.get_session_language(session_id) or ""
+                if not lang:
+                    lang = get_teaching_language()
+                return {"language": lang, "options": TEACHING_LANGUAGES}
             except Exception:
                 return {"language": "English", "options": ["English"]}
 
         @self.app.post("/api/teaching_language")
         async def set_teaching_language_route(request: Request):
-            # Saved before the call starts; the session reads it when it
-            # connects, so the whole conversation runs in this language.
             try:
                 body = await request.json()
             except Exception:
@@ -106,16 +139,39 @@ class ConferenceServer:
             try:
                 from memory.config_manager import get_teaching_language, save_teaching_language
                 lang = str(body.get("language", "")).strip()[:40]
-                if lang:
+                session_id = str(body.get("session_id", "")).strip()
+                if session_id and lang:
+                    self.session_manager.set_session_language(session_id, lang)
+                elif lang:
                     save_teaching_language(lang)
-                return {"language": get_teaching_language()}
+                return {"language": lang or get_teaching_language()}
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+        @self.app.get("/api/sessions/{session_id}/history")
+        async def get_session_history_route(session_id: str):
+            try:
+                history = self.session_manager.get_history(session_id)
+                ttl = self.session_manager.get_ttl(session_id)
+                return {
+                    "session_id": session_id,
+                    "messages": history,
+                    "ttl": ttl,
+                    "message_count": len(history),
+                }
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+        @self.app.delete("/api/sessions/{session_id}")
+        async def delete_session_route(session_id: str):
+            try:
+                cleared = self.session_manager.clear_session(session_id)
+                return {"status": "cleared" if cleared else "not_found", "session_id": session_id}
             except Exception as e:
                 return JSONResponse({"error": str(e)}, status_code=500)
 
         @self.app.get("/avatar/{name}")
         async def get_avatar(name: str):
-            # Serve the model the page asked for; only plain .glb names inside
-            # AVATAR_DIR are allowed (no paths, no traversal).
             glb_file = AVATAR_DIR / name
             if (name != Path(name).name or not name.lower().endswith(".glb")
                     or not glb_file.is_file()):
@@ -134,29 +190,57 @@ class ConferenceServer:
         @self.app.websocket("/ws")
         async def websocket_endpoint(ws: WebSocket):
             await ws.accept()
+            raw_session_id = ws.query_params.get("session_id") or ws.headers.get("x-session-id")
+            session_id = (raw_session_id.strip() if raw_session_id else "") or f"sess_{uuid.uuid4().hex[:12]}"
+
+            # Initialize session tracking
+            self.session_manager.create_or_get_session(session_id)
+            if session_id not in self.session_websockets:
+                self.session_websockets[session_id] = set()
+            self.session_websockets[session_id].add(ws)
+            self.ws_to_session[ws] = session_id
             self.active_websockets.append(ws)
+
             try:
+                # Send session handshake ack
+                await ws.send_text(json.dumps({
+                    "type": "session_init",
+                    "session_id": session_id,
+                    "ttl": self.session_manager.get_ttl(session_id),
+                }))
+
+                # Send existing history if user reconnects within 30m window
+                existing_history = self.session_manager.get_history(session_id)
+                if existing_history:
+                    await ws.send_text(json.dumps({
+                        "type": "history",
+                        "session_id": session_id,
+                        "messages": existing_history,
+                    }))
+
                 while True:
                     text = await ws.receive_text()
                     try:
                         data = json.loads(text)
                         action = data.get("action")
-                        if action == "interrupt" and self.on_interrupt:
-                            self.on_interrupt()
-                        elif action == "toggle_mute" and self.on_mute_toggled:
-                            self.on_mute_toggled(bool(data.get("muted", False)))
-                        elif action == "command" and self.on_text_command:
+                        self.session_manager.touch(session_id)
+
+                        if action == "interrupt":
+                            self._dispatch_callback(self.on_interrupt, session_id)
+                        elif action == "toggle_mute":
+                            self._dispatch_callback(self.on_mute_toggled, session_id, bool(data.get("muted", False)))
+                        elif action == "command":
                             cmd = data.get("text", "").strip()
                             if cmd:
-                                self.on_text_command(cmd)
-                        elif action == "voice_changed" and self.on_voice_changed:
-                            self.on_voice_changed(data.get("voice", ""))
-                        elif action == "screen_capture" and self.on_screen_capture:
-                            self.on_screen_capture()
-                        elif action == "leave" and self.on_leave_call:
-                            self.on_leave_call()
-                        elif action in ("start_call", "wake") and self.on_start_call:
-                            self.on_start_call()
+                                self._dispatch_callback(self.on_text_command, session_id, cmd)
+                        elif action == "voice_changed":
+                            self._dispatch_callback(self.on_voice_changed, session_id, data.get("voice", ""))
+                        elif action == "screen_capture":
+                            self._dispatch_callback(self.on_screen_capture, session_id)
+                        elif action == "leave":
+                            self._dispatch_callback(self.on_leave_call, session_id)
+                        elif action in ("start_call", "wake"):
+                            self._dispatch_callback(self.on_start_call, session_id)
                     except Exception as e:
                         print(f"[ConferenceServer] WS message error: {e}")
             except (WebSocketDisconnect, asyncio.CancelledError):
@@ -164,6 +248,11 @@ class ConferenceServer:
             finally:
                 if ws in self.active_websockets:
                     self.active_websockets.remove(ws)
+                if session_id in self.session_websockets and ws in self.session_websockets[session_id]:
+                    self.session_websockets[session_id].remove(ws)
+                    if not self.session_websockets[session_id]:
+                        self.session_websockets.pop(session_id, None)
+                self.ws_to_session.pop(ws, None)
 
     def start(self) -> None:
         """Start the conference HTTP + WS server in a background daemon thread."""
@@ -191,16 +280,21 @@ class ConferenceServer:
         if self._server:
             self._server.should_exit = True
 
-    def broadcast(self, message: dict[str, Any]) -> None:
-        """Thread-safe broadcast to all connected WebSocket clients."""
-        if not self.active_websockets or not self._loop or not self._loop.is_running():
+    # ── Session-Targeted Messaging ─────────────────────────────────────────────
+
+    def send_to_session(self, session_id: str, message: dict[str, Any]) -> None:
+        """Thread-safe targeted send to WebSockets belonging to a specific session."""
+        if not self._loop or not self._loop.is_running():
+            return
+        sockets = list(self.session_websockets.get(session_id, set()))
+        if not sockets:
             return
 
         text = json.dumps(message)
 
         async def _send():
             dead = []
-            for ws in self.active_websockets:
+            for ws in sockets:
                 try:
                     await ws.send_text(text)
                 except Exception:
@@ -208,6 +302,61 @@ class ConferenceServer:
             for ws in dead:
                 if ws in self.active_websockets:
                     self.active_websockets.remove(ws)
+                if session_id in self.session_websockets and ws in self.session_websockets[session_id]:
+                    self.session_websockets[session_id].remove(ws)
+                self.ws_to_session.pop(ws, None)
+
+        try:
+            asyncio.run_coroutine_threadsafe(_send(), self._loop)
+        except Exception:
+            pass
+
+    def send_state(self, session_id: str, state: str) -> None:
+        self.send_to_session(session_id, {"type": "state", "state": state})
+
+    def send_audio_level(self, session_id: str, level: float) -> None:
+        self.send_to_session(session_id, {"type": "audio_level", "level": round(float(level), 3)})
+
+    def send_viseme(self, session_id: str, level: float, openness: float, width: float, tag: str = "") -> None:
+        self.send_to_session(session_id, {
+            "type": "viseme",
+            "level": round(float(level), 3),
+            "openness": round(float(openness), 3),
+            "width": round(float(width), 3),
+            "tag": str(tag or "")
+        })
+
+    def send_log(self, session_id: str, text: str) -> None:
+        self.send_to_session(session_id, {"type": "log", "message": text})
+
+    def send_content(self, session_id: str, title: str, text: str) -> None:
+        self.send_to_session(session_id, {"type": "content", "title": title, "text": text})
+
+    def send_mute(self, session_id: str, muted: bool) -> None:
+        self.send_to_session(session_id, {"type": "mute", "muted": muted})
+
+    # ── Global Broadcast Messaging (Backward Compatibility) ─────────────────────
+
+    def broadcast(self, message: dict[str, Any]) -> None:
+        """Thread-safe broadcast to all connected WebSocket clients across all sessions."""
+        if not self.active_websockets or not self._loop or not self._loop.is_running():
+            return
+
+        text = json.dumps(message)
+
+        async def _send():
+            dead = []
+            for ws in list(self.active_websockets):
+                try:
+                    await ws.send_text(text)
+                except Exception:
+                    dead.append(ws)
+            for ws in dead:
+                if ws in self.active_websockets:
+                    self.active_websockets.remove(ws)
+                session_id = self.ws_to_session.pop(ws, None)
+                if session_id and session_id in self.session_websockets and ws in self.session_websockets[session_id]:
+                    self.session_websockets[session_id].remove(ws)
 
         try:
             asyncio.run_coroutine_threadsafe(_send(), self._loop)

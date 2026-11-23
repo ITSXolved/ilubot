@@ -1618,6 +1618,15 @@
           </div>
           <input type="checkbox" id="ptt-toggle">
         </div>
+
+        <div class="form-group" style="margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);">
+          <label class="form-label">Active Session (30-min Redis Cache)</label>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="session-id-display" class="form-select" style="font-family: monospace; font-size: 11px; cursor: default;" readonly>
+            <button type="button" id="btn-reset-session" class="send-btn" style="width: auto; padding: 0 12px; font-size: 12px; height: 38px; border-radius: 8px; white-space: nowrap; background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5;">New Session</button>
+          </div>
+          <div style="font-size: 11px; color: var(--text-dim); margin-top: 5px;">Conversations automatically clean up after 30 minutes of inactivity.</div>
+        </div>
       </div>
     </div>
   </div>
@@ -3360,6 +3369,27 @@
     // ── Bridge to Python Backend (QWebChannel / WebSocket) ────────────────────────
     let pyBridge = null;
 
+    function getSessionId() {
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        let sid = urlParams.get('session_id') || localStorage.getItem('ilubot_session_id');
+        if (!sid || !sid.trim()) {
+          sid = 'sess_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36).slice(-4);
+        }
+        localStorage.setItem('ilubot_session_id', sid);
+        return sid;
+      } catch (e) {
+        return 'sess_' + Math.random().toString(36).substring(2, 10);
+      }
+    }
+
+    let currentSessionId = getSessionId();
+
+    function updateSessionUI(sid, ttl) {
+      const el = document.getElementById('session-id-display');
+      if (el) el.value = sid;
+    }
+
     function initBridge() {
       if (typeof QWebChannel !== 'undefined' && typeof qt !== 'undefined') {
         new QWebChannel(qt.webChannelTransport, function(channel) {
@@ -3379,22 +3409,41 @@
       }
     }
 
+    function renderRestoredHistory(messages) {
+      addChatMessage('system', `Restored ${messages.length} previous conversation turns from your active session.`);
+      messages.forEach(msg => {
+        const role = msg.role === 'model' ? 'assistant' : (msg.role || 'user');
+        const text = msg.text || '';
+        addChatMessage(role, text, false);
+      });
+    }
+
     function initWebSocket() {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host || '127.0.0.1:8085';
-      const wsUrl = `${proto}//${host}/ws`;
+      const wsUrl = `${proto}//${host}/ws?session_id=${encodeURIComponent(currentSessionId)}`;
       let ws = null;
 
       try {
         ws = new WebSocket(wsUrl);
         ws.onopen = () => {
-          console.log('[Conference] Connected to WebSocket');
-          addChatMessage('system', 'Connected to live AI session.');
+          console.log('[Conference] Connected to WebSocket with session:', currentSessionId);
+          updateSessionUI(currentSessionId);
         };
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data.type === 'state') onStateChanged(data.state);
+            if (data.type === 'session_init') {
+              if (data.session_id) {
+                currentSessionId = data.session_id;
+                try { localStorage.setItem('ilubot_session_id', currentSessionId); } catch (e) {}
+                updateSessionUI(currentSessionId, data.ttl);
+              }
+            } else if (data.type === 'history') {
+              if (Array.isArray(data.messages) && data.messages.length > 0) {
+                renderRestoredHistory(data.messages);
+              }
+            } else if (data.type === 'state') onStateChanged(data.state);
             else if (data.type === 'audio_level') onAudioLevel(data.level);
             else if (data.type === 'viseme') onVisemeFrame(data.level, data.openness, data.width, data.tag);
             else if (data.type === 'log') addChatMessage('system', data.message);
@@ -3409,6 +3458,10 @@
         };
 
         window.wsBridge = ws;
+      } catch (e) {
+        console.warn('WebSocket init exception:', e);
+      }
+    }
       } catch (e) {
         console.warn('WebSocket init exception:', e);
       }
@@ -3804,7 +3857,7 @@
       }
     }
 
-    function addChatMessage(role, text) {
+    function addChatMessage(role, text, speak = true) {
       const body = document.getElementById('chat-body');
       const msg = document.createElement('div');
       msg.className = `chat-msg ${role}`;
@@ -3824,8 +3877,8 @@
       body.appendChild(msg);
       body.scrollTop = body.scrollHeight;
 
-      // Speak assistant answers using browser voice
-      if (role === 'assistant') {
+      // Speak assistant answers using browser voice (skip when restoring past history)
+      if (role === 'assistant' && speak) {
         speakText(text);
       }
     }
@@ -3904,6 +3957,19 @@
       document.getElementById('settings-modal').classList.remove('open');
     });
 
+    const resetSessionBtn = document.getElementById('btn-reset-session');
+    if (resetSessionBtn) {
+      resetSessionBtn.addEventListener('click', async () => {
+        if (confirm('Start a fresh session? Current conversation history will be cleaned.')) {
+          try {
+            await fetch(`/api/sessions/${encodeURIComponent(currentSessionId)}`, { method: 'DELETE' });
+          } catch (e) {}
+          try { localStorage.removeItem('ilubot_session_id'); } catch (e) {}
+          window.location.reload();
+        }
+      });
+    }
+
     // Call screen action listeners
     // ── Teaching language picker (call screen) ─────────────────────────────
     // Saved to the backend as soon as it changes; the AI session reads it
@@ -3921,7 +3987,7 @@
         });
         sel.value = current;
       };
-      fetch('/api/teaching_language')
+      fetch(`/api/teaching_language?session_id=${encodeURIComponent(currentSessionId)}`)
         .then(r => r.ok ? r.json() : null)
         .then(d => { if (d && d.options) fill(d.options, d.language || 'English'); })
         .catch(() => {});
@@ -3930,7 +3996,7 @@
         fetch('/api/teaching_language', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ language }),
+          body: JSON.stringify({ language, session_id: currentSessionId }),
         }).then(r => r.ok ? r.json() : null).then(d => {
           if (d && d.language) addChatMessage('system', `Teaching language set to ${d.language}.`);
         }).catch(() => {});

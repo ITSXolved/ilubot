@@ -373,20 +373,77 @@ frame.postMessage(
 
 ---
 
-## 5. Production Hardening Checklist (Multi-Student Platforms)
+## 5. Production Multi-User Architecture & Redis Sessions
 
-Before rolling Ilubot out to multiple concurrent learners in an EdTech production environment, address these four architectural items in the current codebase:
+Ilubot includes built-in **multi-user session isolation** backed by **Redis** (with an in-memory fallback mimicking the same TTL when running without Redis):
 
-1. **Per-Student Session Isolation (`headless_server.py` & `core/conference_server.py`)**
-   - *Current state*: `headless_server.py` creates one global `HeadlessSession` and `ConferenceServer.broadcast()` sends messages to all sockets in `self.active_websockets`. Suitable for single-user containers, demos, or local embeds.
-   - *For multi-user SaaS*: Key sessions by WebSocket / signed `session_id` (e.g., `dict[str, HeadlessSession]`) so each student has an isolated Gemini `chat` history and receives only their own `content`, `state`, and `viseme` events.
-2. **Authentication & Authorization**
-   - `ConferenceServer` currently leaves `/ws` and `/api/*` open without auth. Add a short-lived signed JWT or session token check on `/ws?token=...` and `/api/*` (see `dashboard/server.py` for an existing token-validation example).
-3. **CORS Origin Allow-Listing**
+```
+                       ┌────────────────────────────────────────────────────────┐
+                       │                     Study App                          │
+                       │    (iframe or WebSocket with ?session_id=<student_id>) │
+                       └───────────────────▲────────────────────────────────────┘
+                                           │ WebSocket / REST (/ws, /api/*)
+                                           ▼
+                       ┌────────────────────────────────────────────────────────┐
+                       │               Ilubot Conference Server                 │
+                       │             (core/conference_server.py)                │
+                       │                                                        │
+                       │  - session_websockets: dict[session_id, set[WS]]       │
+                       │  - send_to_session(session_id, msg)                    │
+                       │  - GET /api/sessions/{session_id}/history              │
+                       │  - DELETE /api/sessions/{session_id}                   │
+                       └───────────────────▲────────────────────────────────────┘
+                                           │
+                    ┌──────────────────────┴──────────────────────┐
+                    ▼                                             ▼
+     ┌─────────────────────────────┐               ┌─────────────────────────────┐
+     │   Redis Session Manager     │               │    Headless Multi-Session   │
+     │   (core/redis_session.py)   │               │     (headless_server.py)    │
+     │                             │               │                             │
+     │ - Key: ilubot:session:{id}  │               │ - user_chats[session_id]    │
+     │ - 30-min (1800s) TTL        │               │ - Restores Gemini history   │
+     │ - Auto-purged after 30m     │               │ - Isolated Socratic context │
+     │ - Message log & language    │               │ - Targeted visemes & state  │
+     └──────────────┬──────────────┘               └─────────────────────────────┘
+                    │
+                    ▼
+          ┌───────────────────┐
+          │   Redis Server    │
+          │  (redis:7-alpine) │
+          └───────────────────┘
+```
+
+### 5.1 How Sessions Work
+1. **Session Identification**: When connecting, pass `?session_id=<user_id_or_uuid>` in the WebSocket URL:
+   ```js
+   const ws = new WebSocket(`wss://ilubot.yourdomain.com/ws?session_id=${studentId}`);
+   ```
+   If omitted, the server and web client automatically generate a unique `sess_<id>` and store it in `localStorage`.
+2. **Conversation History & 30-Minute Automatic Expiration**:
+   - Every user interaction (`command`, `start_call`, reply) is saved into Redis under `ilubot:session:{session_id}`.
+   - Redis sets a **30-minute (1800 seconds)** TTL on every interaction (`EXPIRE 1800`).
+   - If a student closes their tab and returns within 30 minutes, Ilubot automatically restores their conversation history and reconnects their Gemini chat without losing context.
+   - If 30 minutes pass without student activity, Redis automatically deletes the session key and cleans all conversation history.
+3. **Session REST APIs**:
+   - `GET /api/sessions/{session_id}/history`: Returns JSON list of messages, count, and remaining TTL in seconds.
+   - `DELETE /api/sessions/{session_id}`: Manually resets/clears a student's session and history immediately.
+   - `GET /api/teaching_language?session_id={session_id}`: Retrieves the session's active teaching language.
+   - `POST /api/teaching_language`: Saves language for that specific session (`{"language": "Spanish", "session_id": "..."}`).
+
+### 5.2 Production Hardening Checklist
+
+Before rolling Ilubot out to thousands of concurrent learners in an EdTech production environment:
+
+1. **Authentication & Authorization**
+   - In production, validate JWTs or study-app session tokens in `websocket_endpoint` (`raw_token = ws.query_params.get("token")`) to ensure only enrolled students can open tutoring sessions.
+2. **CORS Origin Allow-Listing**
    - `core/conference_server.py` currently sets `allow_origins=["*"]`. Restrict `allow_origins` to your study application's origin(s) in production.
-4. **Curriculum & Data-Privacy Customization**
+3. **Curriculum & Data-Privacy Customization**
    - **Pedagogy customization**: Adjust the system instruction in `headless_server.py` (lines 74–95) or `core/prompt.txt` to include grade level, subject rubric, or curriculum standards while keeping the 3–4 turn Socratic discovery loop.
    - **Self-hosted / Offline inference**: For strict institutional privacy requirements, desktop/local deployments support swapping Gemini for Ollama, LM Studio, vLLM, or OpenAI-compatible endpoints plus local Whisper STT and Piper TTS via `providers/`.
+4. **Redis Configuration**:
+   - Point `REDIS_URL` in environment to your managed Redis instance (e.g., Google Cloud Memorystore, AWS ElastiCache, or Redis Cloud).
+   - Configure `REDIS_SESSION_TTL` (in seconds) if you want a custom expiration window (default: 1800s).
 
 ---
 
@@ -413,3 +470,4 @@ Before rolling Ilubot out to multiple concurrent learners in an EdTech productio
    {"action":"command","text":"[STUDY_MATERIAL] Photosynthesis converts CO2 and water into glucose using light. [/STUDY_MATERIAL]\nStudent question: Where does the oxygen released come from?"}
    ```
    Expected: Ilubot responds with a concise **Turn 1 guiding question** rather than immediately giving the direct answer, and confirms the answer by Turn 3–4.
+
